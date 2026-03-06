@@ -1,11 +1,9 @@
-// SessionList — scrollable list of sessions for the selected agent
-
 import { memo, useCallback } from "react";
+import { Loader } from "lucide-react";
 import { useSessions } from "@/features/chat/hooks/useSessions";
 import { useChatStore } from "@/features/chat/store";
-import { SessionItem } from "./SessionItem";
-import { Loader } from "lucide-react";
 import { useChatActions } from "@/features/chat/hooks/useChatActions";
+import { SessionItem } from "./SessionItem";
 
 export const SessionList = memo(function SessionList() {
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
@@ -22,59 +20,27 @@ export const SessionList = memo(function SessionList() {
   );
 
   if (!selectedAgentId) {
-    return (
-      <div className="px-3 py-4 text-center text-xs text-text-tertiary">
-        Select an agent first
-      </div>
-    );
+    return <div className="session-list muted">Select an agent first</div>;
   }
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-6">
-        <Loader size={16} className="animate-spin text-text-tertiary" />
+      <div className="session-list muted" style={{ justifyItems: "center", alignContent: "start", paddingTop: 20 }}>
+        <Loader size={16} className="animate-spin" />
       </div>
     );
   }
 
-  if (error) {
-    if (sessions && sessions.length > 0) {
-      return (
-        <div className="flex h-full flex-col">
-          <div className="px-3 py-1.5 text-center text-[11px] text-status-warning">
-            Session refresh timeout, showing cached list
-          </div>
-          <div className="flex flex-col gap-1 overflow-y-auto px-3 pb-3">
-            {sessions.map((session) => (
-              <SessionItem
-                key={session.id}
-                session={session}
-                isActive={session.id === selectedSessionId}
-                onSelect={handleSelect}
-                onDelete={deleteSession}
-              />
-            ))}
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div className="px-3 py-4 text-center text-xs text-status-error">
-        Failed to load sessions: {String(error)}
-      </div>
-    );
+  if (error && (!sessions || sessions.length === 0)) {
+    return <div className="session-list muted">Failed to load sessions</div>;
   }
 
   if (!sessions || sessions.length === 0) {
-    return (
-      <div className="px-3 py-4 text-center text-xs text-text-tertiary">
-        No conversations yet
-      </div>
-    );
+    return <div className="session-list muted">No conversations yet</div>;
   }
 
   return (
-    <div className="flex flex-col gap-1 overflow-y-auto px-3 pb-3">
+    <div className="session-list">
       {sessions.map((session) => (
         <SessionItem
           key={session.id}

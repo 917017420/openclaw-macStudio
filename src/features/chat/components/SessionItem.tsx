@@ -1,10 +1,7 @@
-// SessionItem — single session row in the sidebar list
-
 import { memo, useEffect, useState } from "react";
-import type { ChatSession } from "@/lib/gateway";
-import { cn } from "@/lib/utils";
-import { formatRelativeTime } from "@/lib/utils";
 import { Check, Trash2, X } from "lucide-react";
+import type { ChatSession } from "@/lib/gateway";
+import { formatRelativeTime } from "@/lib/utils";
 
 interface SessionItemProps {
   session: ChatSession;
@@ -29,70 +26,31 @@ export const SessionItem = memo(function SessionItem({
   }, [confirmingDelete]);
 
   return (
-    <div
-      className={cn(
-        "group flex w-full items-center gap-2 rounded-xl border px-2.5 py-1.5 transition-all",
-        isActive
-          ? "border-primary/40 bg-primary-light shadow-sm"
-          : "border-border/70 bg-surface-0/70 hover:border-border-hover hover:bg-surface-0",
-      )}
-    >
-      <button
-        onClick={() => onSelect(session.id)}
-        className="flex min-w-0 flex-1 flex-col gap-0.5 px-1 py-1 text-left"
-      >
-        <span className="truncate text-sm font-medium text-text-primary">
-          {session.title || "Untitled"}
-        </span>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-text-tertiary">
-            {session.messageCount} messages
-          </span>
-          <span className="text-xs text-text-tertiary">
-            {formatRelativeTime(session.updatedAt)}
-          </span>
+    <div className={`session-item ${isActive ? "active" : ""}`}>
+      <button type="button" className="session-main" onClick={() => onSelect(session.id)}>
+        <div className="session-title">{session.title || "Untitled"}</div>
+        <div className="session-meta">
+          <span>{session.messageCount} messages</span>
+          <span>{formatRelativeTime(session.updatedAt)}</span>
         </div>
       </button>
-      {!isMainSession && (confirmingDelete
-        ? (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log("[SessionItem] Confirm delete:", session.id);
-                onDelete(session.id);
-                setConfirmingDelete(false);
-              }}
-              className="rounded-md p-1 text-status-error transition hover:bg-surface-3"
-              title={isMainSession ? "Confirm clear main session" : "Confirm delete session"}
-            >
+
+      {!isMainSession ? (
+        confirmingDelete ? (
+          <div style={{ display: "inline-flex", gap: 4 }}>
+            <button className="chat-btn-danger" style={{ height: 28, padding: "0 8px" }} onClick={() => onDelete(session.id)} title="Confirm delete">
               <Check size={14} />
             </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirmingDelete(false);
-              }}
-              className="rounded-md p-1 text-text-tertiary transition hover:bg-surface-3 hover:text-text-secondary"
-              title="Cancel"
-            >
+            <button className="chat-btn-ghost" style={{ height: 28, padding: "0 8px" }} onClick={() => setConfirmingDelete(false)} title="Cancel">
               <X size={14} />
             </button>
           </div>
+        ) : (
+          <button className="chat-btn-ghost" style={{ height: 28, padding: "0 8px" }} onClick={() => setConfirmingDelete(true)} title="Delete session">
+            <Trash2 size={14} />
+          </button>
         )
-        : (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log("[SessionItem] Arm delete confirm:", session.id);
-                setConfirmingDelete(true);
-              }}
-              className="rounded-md p-1 text-text-tertiary opacity-0 transition hover:bg-surface-3 hover:text-status-error group-hover:opacity-100"
-              title="Delete session"
-            >
-              <Trash2 size={14} />
-            </button>
-        ))}
+      ) : null}
     </div>
   );
 });

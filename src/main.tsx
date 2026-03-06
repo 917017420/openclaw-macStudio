@@ -1,10 +1,8 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-import "./styles/globals.css";
+import "../upstream/ui/src/main.ts";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const mount = document.getElementById("root");
+if (mount) {
+  mount.replaceWith(document.createElement("openclaw-app"));
+} else if (!document.querySelector("openclaw-app")) {
+  document.body.appendChild(document.createElement("openclaw-app"));
+}

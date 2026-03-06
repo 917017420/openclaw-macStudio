@@ -1,131 +1,89 @@
-// AgentPicker — agent selection UI
-// Single agent: display directly. Multiple agents: dropdown.
-
-import { memo } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Bot, ChevronDown } from "lucide-react";
 import { useAgents } from "@/features/chat/hooks/useAgents";
 import { useChatStore } from "@/features/chat/store";
-import { Bot, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useState, useRef, useEffect, useCallback } from "react";
 
 export const AgentPicker = memo(function AgentPicker() {
   const { data: agents, isLoading, error } = useAgents();
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectAgent = useChatStore((s) => s.selectAgent);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  // Auto-select first agent if none selected
   useEffect(() => {
     if (agents && agents.length > 0 && !selectedAgentId) {
       selectAgent(agents[0].id);
     }
   }, [agents, selectedAgentId, selectAgent]);
 
-  // Close dropdown on outside click
   useEffect(() => {
-    if (!dropdownOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!panelRef.current?.contains(e.target as Node)) {
+        setOpen(false);
       }
     };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [dropdownOpen]);
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
 
   const handleSelect = useCallback(
     (agentId: string) => {
       selectAgent(agentId);
-      setDropdownOpen(false);
+      setOpen(false);
     },
     [selectAgent],
   );
 
   if (isLoading) {
-    return (
-      <div className="rounded-xl px-3 py-2 text-xs text-text-tertiary">
-        Loading agents…
-      </div>
-    );
+    return <div className="muted">Loading agents...</div>;
   }
 
   if (error) {
-    return (
-      <div className="rounded-xl px-3 py-2 text-xs text-status-error">
-        Failed to load agents: {String(error)}
-      </div>
-    );
+    return <div className="muted">Failed to load agents</div>;
   }
 
   if (!agents || agents.length === 0) {
-    return (
-      <div className="rounded-xl px-3 py-2 text-xs text-text-tertiary">
-        No agents available
-      </div>
-    );
+    return <div className="muted">No agents available</div>;
   }
 
-  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+  const selected = agents.find((a) => a.id === selectedAgentId) ?? agents[0];
 
-  // Single agent — simple display
   if (agents.length === 1) {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-surface-0 px-3 py-2 shadow-sm">
-        <Bot size={16} className="text-primary" />
-        <span className="text-sm font-medium text-text-primary">
-          {agents[0].name}
+      <div className="agent-picker-btn" style={{ cursor: "default" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <Bot size={15} />
+          <span>{selected.name}</span>
         </span>
-        <div
-          className={cn(
-            "ml-auto h-2 w-2 rounded-full",
-            agents[0].status === "running" ? "bg-status-running" : "bg-status-idle",
-          )}
-        />
+        <span className={`status-dot ${selected.status === "running" ? "connected" : ""}`} />
       </div>
     );
   }
 
-  // Multiple agents — dropdown
   return (
-    <div ref={dropdownRef} className="relative">
-      <button
-        onClick={() => setDropdownOpen(!dropdownOpen)}
-        className="flex w-full items-center gap-2 rounded-xl border border-border/70 bg-surface-0 px-3 py-2 text-left shadow-sm transition-colors hover:bg-surface-2"
-      >
-        <Bot size={16} className="text-primary" />
-        <span className="flex-1 truncate text-sm font-medium text-text-primary">
-          {selectedAgent?.name ?? "Select agent"}
+    <div className="agent-picker-panel" ref={panelRef}>
+      <button type="button" className="agent-picker-btn" onClick={() => setOpen((v) => !v)}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <Bot size={15} />
+          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selected.name}</span>
         </span>
-        <ChevronDown
-          size={14}
-          className={cn(
-            "text-text-tertiary transition-transform",
-            dropdownOpen && "rotate-180",
-          )}
-        />
+        <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 140ms" }} />
       </button>
 
-      {dropdownOpen && (
-        <div className="absolute left-0 right-0 top-[calc(100%+0.4rem)] z-10 rounded-xl border border-border bg-surface-0 py-1 shadow-lg">
+      {open && (
+        <div className="agent-picker-menu">
           {agents.map((agent) => (
             <button
               key={agent.id}
+              type="button"
+              className={`agent-picker-option ${agent.id === selectedAgentId ? "active" : ""}`}
               onClick={() => handleSelect(agent.id)}
-              className={cn(
-                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm",
-                agent.id === selectedAgentId
-                  ? "bg-primary-light text-primary"
-                  : "text-text-primary hover:bg-surface-2",
-              )}
             >
-              <span className="flex-1 truncate">{agent.name}</span>
-              <div
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  agent.status === "running" ? "bg-status-running" : "bg-status-idle",
-                )}
-              />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span className={`status-dot ${agent.status === "running" ? "connected" : ""}`} />
+                {agent.name}
+              </span>
             </button>
           ))}
         </div>

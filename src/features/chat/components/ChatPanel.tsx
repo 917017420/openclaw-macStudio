@@ -1,41 +1,33 @@
-// ChatPanel — right-side main chat panel (header + messages + composer)
-
 import { memo } from "react";
+import { MessageSquare } from "lucide-react";
 import { useChatStore } from "@/features/chat/store";
 import { useSessionMessages } from "@/features/chat/hooks/useSessionMessages";
 import { ChatHeader } from "./ChatHeader";
 import { MessageList } from "./MessageList";
 import { MessageComposer } from "./MessageComposer";
-import { MessageSquare } from "lucide-react";
 
 export const ChatPanel = memo(function ChatPanel() {
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectedSessionId = useChatStore((s) => s.selectedSessionId);
 
-  // Fetch initial messages when session is selected
   useSessionMessages(selectedSessionId);
 
   if (!selectedAgentId) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
-          <MessageSquare size={48} className="mx-auto text-text-tertiary" />
-          <h2 className="mt-4 text-lg font-semibold text-text-primary">
-            Select an Agent
-          </h2>
-          <p className="mt-1 text-sm text-text-secondary">
-            Choose an agent from the sidebar to start chatting
-          </p>
+      <div className="chat-panel-card" style={{ display: "grid", placeItems: "center" }}>
+        <div className="chat-system-chip" style={{ borderRadius: 12, padding: "10px 14px" }}>
+          <MessageSquare size={16} style={{ marginRight: 8, verticalAlign: "text-bottom" }} />
+          Select an agent to start
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col bg-chat-surface">
+    <section className="chat-panel-card">
       <ChatHeader />
       <MessageList />
       <MessageComposer />
-    </div>
+    </section>
   );
 });

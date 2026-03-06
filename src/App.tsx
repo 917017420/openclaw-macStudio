@@ -36,7 +36,7 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<AppLayout />}>
-              <Route index element={<Navigate to="/connection" replace />} />
+              <Route index element={<Navigate to="/chat" replace />} />
               <Route path="/connection" element={<ConnectionPage />} />
               <Route path="/chat" element={<ChatPage />} />
               <Route path="/agents" element={<AgentsPage />} />
