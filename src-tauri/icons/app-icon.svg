@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="120" x2="884" y2="916" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2A8BFF"/>
+      <stop offset="0.55" stop-color="#1768E6"/>
+      <stop offset="1" stop-color="#1CC4D8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(330 300) rotate(38) scale(520 420)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8FE5FF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#8FE5FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="clawShade" x1="470" y1="180" x2="640" y2="770" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0A1F5A" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#081B46" stop-opacity="0.56"/>
+    </linearGradient>
+    <linearGradient id="clawCore" x1="450" y1="130" x2="670" y2="810" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDF6FF"/>
+    </linearGradient>
+    <filter id="drop" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#032969" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect x="88" y="88" width="848" height="848" rx="220" fill="url(#bg)"/>
+  <rect x="88" y="88" width="848" height="848" rx="220" fill="url(#glow)"/>
+
+  <g filter="url(#drop)">
+    <path d="M368 216c36-7 73 15 82 49l106 400c12 46-16 93-62 105-46 12-93-16-105-62L283 308c-12-46 16-93 62-105 8-2 15-3 23-3Z" fill="url(#clawShade)"/>
+    <path d="M500 192c36-7 73 15 82 49l98 368c12 46-16 93-62 105-46 12-93-16-105-62L415 284c-12-46 16-93 62-105 8-2 15-3 23-3Z" fill="url(#clawCore)"/>
+
+    <path d="M536 245c33-6 67 13 76 45l83 314c11 42-14 84-56 95-42 11-84-14-95-56l-83-314c-11-42 14-84 56-95 6-2 13-2 19-2Z" fill="url(#clawShade)"/>
+    <path d="M654 226c33-6 67 13 76 45l76 287c11 42-14 84-56 95-42 11-84-14-95-56l-76-287c-11-42 14-84 56-95 6-2 13-2 19-2Z" fill="url(#clawCore)"/>
+  </g>
+
+  <circle cx="742" cy="298" r="26" fill="#DFF9FF" fill-opacity="0.95"/>
+  <circle cx="787" cy="255" r="12" fill="#DFF9FF" fill-opacity="0.8"/>
+</svg>

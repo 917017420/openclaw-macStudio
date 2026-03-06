@@ -7,6 +7,8 @@ import { ChatPage } from "@/features/chat";
 import { AgentsPage } from "@/features/agents";
 import { ChannelsPage } from "@/features/channels";
 import { SettingsPage } from "@/features/settings";
+import { useGateway } from "@/features/connection/hooks/useGateway";
+import { useChatPersistence } from "@/features/chat/hooks/useChatPersistence";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,10 +20,19 @@ const queryClient = new QueryClient({
   },
 });
 
+function AppBootstrap() {
+  // Initialize persisted gateway configs + active gateway id.
+  useGateway();
+  // Persist and restore chat snapshots locally.
+  useChatPersistence();
+  return null;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
+        <AppBootstrap />
         <BrowserRouter>
           <Routes>
             <Route element={<AppLayout />}>

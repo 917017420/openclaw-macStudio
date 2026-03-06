@@ -14,6 +14,23 @@ interface MarkdownRendererProps {
   plainMode?: boolean;
 }
 
+function formatCommandHelpContent(content: string): string {
+  if (!content.includes("ℹ️ Help")) return content;
+
+  const lines = content.split("\n");
+  const formatted = lines.map((line) => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) return line;
+    if (trimmed.startsWith("ℹ️ Help")) return `**${trimmed}**`;
+
+    return line.replace(/(^|\s)(\/[a-zA-Z][\w-]*)/g, (_m, prefix: string, cmd: string) => {
+      return `${prefix}\`${cmd}\``;
+    });
+  });
+
+  return formatted.join("\n");
+}
+
 /** Copy button for code blocks */
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -106,8 +123,10 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
   plainMode = false,
 }: MarkdownRendererProps) {
+  const formattedContent = plainMode ? content : formatCommandHelpContent(content);
+
   if (plainMode || !content) {
-    return <span className="whitespace-pre-wrap">{content}</span>;
+    return <span className="whitespace-pre-wrap">{formattedContent}</span>;
   }
 
   return (
@@ -117,7 +136,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
         rehypePlugins={[rehypeHighlight]}
         components={markdownComponents}
       >
-        {content}
+        {formattedContent}
       </ReactMarkdown>
     </div>
   );

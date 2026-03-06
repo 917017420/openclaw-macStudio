@@ -36,7 +36,7 @@ export const MessageList = memo(function MessageList() {
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
+        <div className="rounded-3xl border border-border/80 bg-surface-1 px-8 py-10 text-center shadow-[0_8px_28px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_28px_rgba(0,0,0,0.35)]">
           <MessageSquare size={40} className="mx-auto text-text-tertiary" />
           <p className="mt-3 text-sm text-text-secondary">
             Start a conversation
@@ -49,11 +49,14 @@ export const MessageList = memo(function MessageList() {
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-y-auto px-4 py-4"
+      className="flex-1 overflow-y-auto px-4 py-5 sm:px-6"
     >
-      <div className="mx-auto flex max-w-3xl flex-col gap-3">
+      <div className="mx-auto flex max-w-4xl flex-col gap-3.5">
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+          />
         ))}
 
         {/* Waiting for response indicator */}

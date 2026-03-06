@@ -18,10 +18,10 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   if (!reasoning) return null;
 
   return (
-    <div className="mb-2 rounded-lg border border-border bg-surface-1">
+    <div className="mb-2 rounded-xl border border-border/70 bg-surface-1/90">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-secondary hover:text-text-primary"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-secondary transition-colors hover:text-text-primary"
       >
         <Brain size={14} className={cn(isStreaming && "animate-pulse text-primary")} />
         <span className="font-medium">

@@ -36,7 +36,7 @@ function DebugPanel() {
     ? currentMsgs
         .map(
           (m) =>
-            `${m.role}(${m.id.slice(0, 6)}${
+            `${m.role}(${(typeof m.id === "string" ? m.id : "no-id").slice(0, 6)}${
               m.role === "assistant"
                 ? `:${(m as { content?: string }).content?.length ?? 0}ch`
                 : ""
@@ -46,7 +46,7 @@ function DebugPanel() {
     : "none";
 
   return (
-    <div className="fixed bottom-0 left-14 right-0 z-50 border-t border-border bg-surface-0/95 px-4 py-2 text-xs font-mono backdrop-blur">
+    <div className="fixed bottom-0 left-16 right-0 z-50 border-t border-border bg-surface-0/95 px-4 py-2 text-xs font-mono backdrop-blur">
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         <span>
           <b>agent:</b> {selectedAgentId ?? "null"}
@@ -85,17 +85,17 @@ function DebugPanel() {
 
 export function ChatPage() {
   const state = useConnectionStore((s) => s.state);
-  const [showDebug, setShowDebug] = useState(true);
+  const [showDebug, setShowDebug] = useState(false);
 
   // Subscribe to chat/agent events (mounted once at page level)
   useChatEvents();
 
   if (state !== "connected") {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-        <MessageSquare size={48} className="text-text-tertiary" />
-        <div>
-          <h2 className="text-lg font-semibold text-text-primary">
+      <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="rounded-3xl border border-border/80 bg-surface-1 px-8 py-10 shadow-[0_8px_28px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_28px_rgba(0,0,0,0.35)]">
+          <MessageSquare size={48} className="mx-auto text-text-tertiary" />
+          <h2 className="mt-4 text-lg font-semibold text-text-primary">
             No Connection
           </h2>
           <p className="mt-1 text-sm text-text-secondary">
@@ -107,7 +107,7 @@ export function ChatPage() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="relative flex h-full overflow-hidden">
       <ChatSidebar />
       <div className="flex-1 overflow-hidden">
         <ChatPanel />
@@ -116,7 +116,7 @@ export function ChatPage() {
       {/* Debug toggle button */}
       <button
         onClick={() => setShowDebug((v) => !v)}
-        className="fixed bottom-2 right-2 z-50 rounded-full bg-surface-2 p-1.5 text-text-tertiary hover:text-text-primary"
+        className="fixed bottom-3 right-3 z-50 rounded-full border border-border bg-surface-1 p-2 text-text-tertiary shadow-sm transition-colors hover:bg-surface-2 hover:text-text-primary"
         title="Toggle debug panel"
       >
         <Bug size={14} />

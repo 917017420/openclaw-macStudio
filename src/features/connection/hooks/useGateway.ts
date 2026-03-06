@@ -1,6 +1,6 @@
 // Hook: useGateway — provides Gateway connection management
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useConnectionStore } from "@/features/connection/store";
 import {
   loadConfigs,
@@ -15,6 +15,7 @@ import {
  */
 export function useGateway() {
   const store = useConnectionStore();
+  const hydratedRef = useRef(false);
 
   // Load persisted configs on mount
   useEffect(() => {
@@ -27,20 +28,16 @@ export function useGateway() {
       ]);
       if (!mounted) return;
 
-      if (configs.length > 0) {
-        // Hydrate store with saved configs
-        for (const config of configs) {
-          useConnectionStore.getState().addConfig({
-            name: config.name,
-            url: config.url,
-            token: config.token,
-            deviceToken: config.deviceToken,
-          });
-        }
-        if (activeId) {
-          useConnectionStore.getState().setActiveConfig(activeId);
-        }
-      }
+      // Hydrate store with persisted configs as-is (preserve ids and optional fields).
+      const activeConfigId = activeId && configs.some((cfg) => cfg.id === activeId)
+        ? activeId
+        : null;
+      useConnectionStore.setState((state) => ({
+        ...state,
+        configs,
+        activeConfigId,
+      }));
+      hydratedRef.current = true;
     }
 
     init();
@@ -51,11 +48,13 @@ export function useGateway() {
 
   // Persist configs when they change
   useEffect(() => {
+    if (!hydratedRef.current) return;
     saveConfigs(store.configs);
   }, [store.configs]);
 
   // Persist active config ID
   useEffect(() => {
+    if (!hydratedRef.current) return;
     saveActiveConfigId(store.activeConfigId);
   }, [store.activeConfigId]);
 

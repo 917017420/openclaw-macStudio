@@ -1,131 +1,104 @@
-// Hook: useChatActions — sendMessage, abortStreaming, resetSession
-// Strategy: after chat.send, poll chat.history for the response
-// (server does not push agent events to this client)
-
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { gateway } from "@/lib/gateway";
-import type { ChatMessage, AssistantMessage } from "@/lib/gateway";
 import { useChatStore } from "@/features/chat/store";
-import { createUserMessage, createAssistantMessage } from "@/features/chat/utils";
+import { createUserMessage } from "@/features/chat/utils";
 import { uid } from "@/lib/utils";
-import { sessionsQueryKey } from "./useSessions";
 import { messagesQueryKey } from "./useSessionMessages";
+import { sessionsQueryKey } from "./useSessions";
+import {
+  extractMessagesFromResponse,
+  mergeServerWithLocal,
+} from "@/features/chat/utils/message-pipeline";
 
-/** Polling interval for chat.history */
-const POLL_INTERVAL = 2000;
-/** Max polling time before giving up */
-const POLL_TIMEOUT = 120_000;
-/** Stabilization: stop polling after N consecutive identical results */
-const STABLE_COUNT = 3;
+const POLL_INTERVAL_MS = 800;
+const POLL_TIMEOUT_MS = 10 * 60_000;
+const POLL_STABLE_COUNT = 1;
 
-/**
- * Normalize a raw message from the server into our ChatMessage type.
- * The server may use different field names.
- */
-function normalizeMessage(raw: Record<string, unknown>): ChatMessage | null {
-  const role = (raw.role ?? raw.type) as string | undefined;
-  if (!role) return null;
+function parseAgentIdFromSessionKey(sessionKey: string): string | null {
+  const m = sessionKey.match(/^agent:([^:]+):/);
+  return m?.[1] ?? null;
+}
 
-  const id = (raw.id ?? raw.messageId ?? raw.message_id ?? uid()) as string;
-  const content = (raw.content ?? raw.text ?? raw.message ?? "") as string;
-  const timestamp = (raw.timestamp ?? raw.ts ?? raw.created_at ?? Date.now()) as number;
+function isSessionKey(value: string): boolean {
+  return value === "main" || /^agent:[^:]+:.+/.test(value);
+}
 
-  if (role === "user" || role === "human") {
-    return { role: "user", id, content, timestamp };
+function normalizeSessionKeyForRpc(
+  rawSessionKey: string,
+  agentId?: string | null,
+  fallbackSessionKey?: string,
+): string {
+  if (isSessionKey(rawSessionKey)) return rawSessionKey;
+  const fallbackAgentId = fallbackSessionKey
+    ? parseAgentIdFromSessionKey(fallbackSessionKey)
+    : null;
+  const resolvedAgentId = agentId ?? fallbackAgentId;
+  if (resolvedAgentId) {
+    return `agent:${resolvedAgentId}:${rawSessionKey}`;
   }
+  return rawSessionKey;
+}
 
-  if (role === "assistant" || role === "ai" || role === "bot") {
+function extractSessionIdentity(res: unknown): {
+  sessionKey?: string;
+  sessionId?: string;
+} {
+  if (!res || typeof res !== "object") return {};
+  const obj = res as Record<string, unknown>;
+
+  const directSessionKey = obj.sessionKey;
+  const directSessionId = obj.sessionId;
+  if (typeof directSessionKey === "string" || typeof directSessionId === "string") {
     return {
-      role: "assistant",
-      id,
-      content,
-      timestamp,
-      isStreaming: false,
-      reasoning: (raw.reasoning ?? raw.thinking) as string | undefined,
-    } as AssistantMessage;
-  }
-
-  if (role === "system") {
-    return { role: "system", id, content, timestamp };
-  }
-
-  if (role === "tool" || role === "tool_call") {
-    return {
-      role: "tool",
-      id,
-      toolName: (raw.toolName ?? raw.tool_name ?? raw.name ?? "unknown") as string,
-      toolCallId: (raw.toolCallId ?? raw.tool_call_id ?? id) as string,
-      input: raw.input ?? raw.arguments,
-      output: raw.output ?? raw.result,
-      status: (raw.status ?? "completed") as "started" | "completed" | "error",
-      timestamp,
+      sessionKey: typeof directSessionKey === "string" ? directSessionKey : undefined,
+      sessionId: typeof directSessionId === "string" ? directSessionId : undefined,
     };
   }
 
-  return null;
+  const session = obj.session;
+  if (session && typeof session === "object") {
+    const sessionObj = session as Record<string, unknown>;
+    return {
+      sessionKey:
+        typeof sessionObj.key === "string"
+          ? sessionObj.key
+          : typeof sessionObj.sessionKey === "string"
+            ? sessionObj.sessionKey
+            : undefined,
+      sessionId:
+        typeof sessionObj.id === "string"
+          ? sessionObj.id
+          : typeof sessionObj.sessionId === "string"
+            ? sessionObj.sessionId
+            : undefined,
+    };
+  }
+
+  return {};
 }
 
-/**
- * Extract messages from server response, trying multiple structures.
- */
-function extractMessages(res: unknown): ChatMessage[] {
-  if (!res) return [];
-
-  // Direct array
-  if (Array.isArray(res)) {
-    return res
-      .map((r) => {
-        if (r && typeof r === "object" && "role" in r) {
-          return normalizeMessage(r as Record<string, unknown>);
-        }
-        return null;
-      })
-      .filter(Boolean) as ChatMessage[];
-  }
-
-  // Object with known array keys
-  if (typeof res === "object") {
-    const obj = res as Record<string, unknown>;
-
-    for (const key of ["messages", "items", "data", "history", "result", "content"]) {
-      if (key in obj && Array.isArray(obj[key])) {
-        return extractMessages(obj[key]);
-      }
-    }
-
-    // Maybe the response IS a single message
-    if ("role" in obj || "type" in obj) {
-      const msg = normalizeMessage(obj);
-      if (msg) return [msg];
-    }
-
-    // Maybe it contains a text/content field (direct assistant response)
-    if ("text" in obj || "content" in obj) {
-      const text = (obj.text ?? obj.content) as string;
-      if (typeof text === "string" && text.length > 0) {
-        return [createAssistantMessage({ content: text })];
-      }
-    }
-  }
-
-  // String response — treat as assistant message
-  if (typeof res === "string" && res.length > 0) {
-    return [createAssistantMessage({ content: res })];
-  }
-
-  return [];
+async function requestChatSend(params: Record<string, unknown>): Promise<unknown> {
+  console.log("[useChatActions] chat.send:", params);
+  return gateway.request<unknown>("chat.send", params);
 }
 
-/**
- * Provides action callbacks for sending messages, aborting streams,
- * and resetting sessions.
- */
+async function fetchLatestMessages(sessionKey: string): Promise<ReturnType<typeof extractMessagesFromResponse>> {
+  try {
+    const historyRes = await gateway.request<unknown>("chat.history", { sessionKey });
+    return extractMessagesFromResponse(historyRes, sessionKey);
+  } catch {
+    return [];
+  }
+}
+
 export function useChatActions() {
   const queryClient = useQueryClient();
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sessionModelPatchModeRef = useRef<"unknown" | "model" | "modelId" | "unsupported">(
+    "unknown",
+  );
 
-  /** Stop any active polling */
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -133,252 +106,357 @@ export function useChatActions() {
     }
   }, []);
 
-  /**
-   * Poll chat.history for new messages after sending.
-   */
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, [stopPolling]);
+
+  const stopPollingIndicatorIfOwned = useCallback((sessionKey: string) => {
+    const state = useChatStore.getState();
+    const ownsPollingIndicator =
+      state.isStreaming &&
+      state.streamingSessionKey === sessionKey &&
+      state.streamingMessageId === "__polling__";
+    if (ownsPollingIndicator) {
+      state.stopStreaming();
+    }
+  }, []);
+
   const pollForResponse = useCallback(
     (sessionKey: string, knownMessageCount: number) => {
       stopPolling();
 
       const store = useChatStore.getState();
-      store.startStreaming(sessionKey, "__polling__");
+      const hasActiveAssistantStream =
+        store.isStreaming &&
+        store.streamingSessionKey === sessionKey &&
+        store.streamingMessageId !== "__polling__";
+      if (!hasActiveAssistantStream) {
+        store.startStreaming(sessionKey, "__polling__", null);
+      }
 
-      const startTime = Date.now();
-      let lastMsgCount = knownMessageCount;
-      let stableChecks = 0;
-      let pollCount = 0;
+      const startedAt = Date.now();
+      let lastServerSignature = "";
+      let stableCount = 0;
+      let inFlight = false;
 
-      console.log(
-        "[useChatActions] Starting poll for session:",
-        sessionKey,
-        "known msgs:",
-        knownMessageCount,
-      );
-
-      pollTimerRef.current = setInterval(async () => {
-        pollCount++;
-        const elapsed = Date.now() - startTime;
-
-        if (elapsed > POLL_TIMEOUT) {
-          console.log("[useChatActions] Poll timeout reached");
-          stopPolling();
-          useChatStore.getState().stopStreaming();
-          return;
-        }
-
+      const tick = async () => {
+        if (inFlight) return;
+        inFlight = true;
         try {
-          // Try chat.history
-          let res: unknown;
-          try {
-            res = await gateway.request<unknown>("chat.history", { sessionKey });
-          } catch {
-            // Fallback to sessions.preview
-            try {
-              res = await gateway.request<unknown>("sessions.preview", {
-                keys: [sessionKey],
-              });
-            } catch (e2) {
-              console.warn("[useChatActions] Poll fetch failed:", e2);
-              return;
-            }
+          if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+            stopPolling();
+            stopPollingIndicatorIfOwned(sessionKey);
+            return;
           }
 
-          console.log(
-            `[useChatActions] Poll #${pollCount} raw response:`,
-            JSON.stringify(res).slice(0, 500),
-          );
-
-          const messages = extractMessages(res);
-          console.log(
-            `[useChatActions] Poll #${pollCount}: got ${messages.length} messages (known: ${knownMessageCount})`,
-          );
-
-          if (messages.length > 0) {
-            // We got server messages — merge them into the store
-            // Keep our optimistic user message if server didn't include it
-            const currentStore = useChatStore.getState();
-            const currentMsgs = currentStore.messagesBySession[sessionKey] ?? [];
-            const optimisticUserMsgs = currentMsgs.filter(
-              (m) => m.role === "user" && !messages.some((sm) => sm.id === m.id),
-            );
-
-            // Combine: server messages + any user messages not yet on server
-            const merged = [...optimisticUserMsgs, ...messages].sort(
-              (a, b) => a.timestamp - b.timestamp,
-            );
-
-            currentStore.setMessages(sessionKey, merged);
-
-            // Check if we have new assistant messages beyond what we knew
-            const assistantMsgs = messages.filter((m) => m.role === "assistant");
-            const hasNewContent = messages.length > knownMessageCount || assistantMsgs.length > 0;
-
-            if (hasNewContent) {
-              // Check stability — if count stopped changing, response is complete
-              if (messages.length === lastMsgCount) {
-                stableChecks++;
-                if (stableChecks >= STABLE_COUNT) {
-                  console.log("[useChatActions] Response stabilized, stopping poll");
-                  stopPolling();
-                  useChatStore.getState().stopStreaming();
-
-                  // Refresh queries
-                  queryClient.invalidateQueries({
-                    queryKey: messagesQueryKey(sessionKey),
-                  });
-                  return;
-                }
-              } else {
-                stableChecks = 0;
-                lastMsgCount = messages.length;
-              }
-            }
+          const serverMessages = await fetchLatestMessages(sessionKey);
+          if (serverMessages.length === 0) {
+            return;
           }
-        } catch (err) {
-          console.error("[useChatActions] Poll error:", err);
+
+          const current = useChatStore.getState().messagesBySession[sessionKey] ?? [];
+          const merged = mergeServerWithLocal(serverMessages, current);
+          useChatStore.getState().setMessages(sessionKey, merged);
+
+          const serverSignature = serverMessages
+            .map((m) => `${m.role}|${m.id}|${m.timestamp}|${m.role === "assistant" || m.role === "user" || m.role === "system" ? m.content : ""}`)
+            .join("\n");
+          if (serverSignature === lastServerSignature) {
+            stableCount++;
+          } else {
+            lastServerSignature = serverSignature;
+            stableCount = 0;
+          }
+
+          const hasServerAssistantProgress =
+            serverMessages.length > knownMessageCount &&
+            serverMessages.some((m) => m.role === "assistant" || m.role === "system");
+          const latestState = useChatStore.getState();
+          const hasActiveRealtimeStream =
+            latestState.isStreaming &&
+            latestState.streamingSessionKey === sessionKey &&
+            latestState.streamingMessageId !== "__polling__";
+
+          if (
+            hasServerAssistantProgress &&
+            stableCount >= POLL_STABLE_COUNT &&
+            !hasActiveRealtimeStream
+          ) {
+            stopPolling();
+            stopPollingIndicatorIfOwned(sessionKey);
+            queryClient.invalidateQueries({ queryKey: messagesQueryKey(sessionKey) });
+          }
+        } finally {
+          inFlight = false;
         }
-      }, POLL_INTERVAL);
+      };
+
+      // Trigger one immediate history probe, then continue with interval polling.
+      void tick();
+      pollTimerRef.current = setInterval(() => {
+        void tick();
+      }, POLL_INTERVAL_MS);
     },
-    [queryClient, stopPolling],
+    [queryClient, stopPolling, stopPollingIndicatorIfOwned],
   );
 
-  /**
-   * Send a chat message.
-   * After sending, polls for the response via chat.history.
-   */
+  async function applySessionModel(
+    sessionKey: string,
+    modelKey: string,
+  ): Promise<void> {
+    const mode = sessionModelPatchModeRef.current;
+    const payloads: Array<Record<string, unknown>> = mode === "model"
+      ? [{ key: sessionKey, model: modelKey }]
+      : mode === "modelId"
+        ? [{ key: sessionKey, modelId: modelKey }]
+        : mode === "unsupported"
+          ? []
+          : [
+            { key: sessionKey, model: modelKey },
+            { key: sessionKey, modelId: modelKey },
+          ];
+
+    for (const payload of payloads) {
+      try {
+        await gateway.request("sessions.patch", payload);
+        sessionModelPatchModeRef.current = "model" in payload ? "model" : "modelId";
+        return;
+      } catch (err) {
+        const message = String(err);
+        if (
+          message.includes("invalid") ||
+          message.includes("required property") ||
+          message.includes("unexpected property")
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (mode !== "unsupported") {
+      sessionModelPatchModeRef.current = "unsupported";
+    }
+  }
+
+  async function callSessionMutation(
+    method: "sessions.reset" | "sessions.delete",
+    sessionKey: string,
+  ): Promise<void> {
+    const payloads: Array<Record<string, unknown>> = [
+      { key: sessionKey },
+      { sessionKey },
+      { sessionId: sessionKey },
+      { id: sessionKey },
+    ];
+
+    let lastError: unknown;
+    for (const payload of payloads) {
+      try {
+        await gateway.request(method, payload);
+        return;
+      } catch (err) {
+        lastError = err;
+        const message = String(err);
+        if (
+          message.includes("invalid") ||
+          message.includes("required property") ||
+          message.includes("unexpected property")
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
   const sendMessage = useCallback(
     async (content: string) => {
       const {
         selectedAgentId,
         selectedSessionId,
+        selectedModelId,
         addMessage,
+        markSessionSent,
         setDraft,
         selectSession,
       } = useChatStore.getState();
 
-      if (!selectedAgentId) {
-        console.warn("[useChatActions] No agent selected");
-        return;
-      }
-
+      if (!selectedAgentId) return;
       const trimmed = content.trim();
       if (!trimmed) return;
 
-      // Resolve session key — use existing or construct default
       const sessionKey = selectedSessionId ?? `agent:${selectedAgentId}:main`;
-
-      // Set selected session BEFORE sending
       if (!selectedSessionId) {
         selectSession(sessionKey);
       }
 
-      // Optimistically add user message
-      const userMsg = createUserMessage(trimmed);
-      addMessage(sessionKey, userMsg);
+      const userMessage = createUserMessage(trimmed);
+      markSessionSent(sessionKey, userMessage.timestamp);
+      addMessage(sessionKey, userMessage);
       setDraft(sessionKey, "");
 
-      const currentMsgCount =
+      const knownCount =
         useChatStore.getState().messagesBySession[sessionKey]?.length ?? 0;
 
-      // Build RPC params
       const params: Record<string, unknown> = {
         sessionKey,
         message: trimmed,
         idempotencyKey: uid(),
       };
 
-      console.warn("[useChatActions] >>> chat.send params:", params);
-
       try {
-        const res = await gateway.request<unknown>("chat.send", params);
-        console.warn("[useChatActions] >>> chat.send response:", JSON.stringify(res));
-
-        // Try to extract assistant response directly from chat.send result
-        const responseMessages = extractMessages(res);
-        console.log("[useChatActions] Extracted from response:", responseMessages.length, "messages");
-
-        if (responseMessages.length > 0) {
-          // Server returned messages directly — add them
-          const assistantMsgs = responseMessages.filter((m) => m.role === "assistant");
-          if (assistantMsgs.length > 0) {
-            for (const msg of assistantMsgs) {
-              addMessage(sessionKey, msg);
-            }
-            console.log("[useChatActions] Added", assistantMsgs.length, "assistant messages from response");
+        if (selectedModelId) {
+          try {
+            await applySessionModel(sessionKey, selectedModelId);
+          } catch (error) {
+            console.warn("[useChatActions] sessions.patch model failed:", error);
           }
         }
 
-        // Start polling for the full response regardless
-        // (server may be still processing, or response was just an ack)
-        pollForResponse(sessionKey, currentMsgCount);
+        const res = await requestChatSend(params);
+        const { sessionKey: responseSessionKey, sessionId: responseSessionId } =
+          extractSessionIdentity(res);
+        const rawReturnedSession = responseSessionKey ?? responseSessionId;
 
-        // Refresh session list
+        const effectiveSessionKey = rawReturnedSession
+          ? normalizeSessionKeyForRpc(rawReturnedSession, selectedAgentId, sessionKey)
+          : sessionKey;
+
+        const state = useChatStore.getState();
+        if (responseSessionId) {
+          state.mapSession(responseSessionId, effectiveSessionKey);
+        }
+        if (
+          responseSessionKey &&
+          responseSessionId &&
+          responseSessionKey !== responseSessionId
+        ) {
+          state.mapSession(responseSessionKey, effectiveSessionKey);
+        }
+
+        if (effectiveSessionKey !== sessionKey) {
+          const source = state.messagesBySession[sessionKey] ?? [];
+          const target = state.messagesBySession[effectiveSessionKey] ?? [];
+          const merged = [...target];
+          for (const msg of source) {
+            if (!merged.some((m) => m.id === msg.id)) {
+              merged.push(msg);
+            }
+          }
+          state.setMessages(effectiveSessionKey, merged);
+          state.clearSession(sessionKey);
+        }
+
+        state.selectSession(effectiveSessionKey);
         queryClient.invalidateQueries({
           queryKey: sessionsQueryKey(selectedAgentId),
         });
-      } catch (err) {
-        console.error("[useChatActions] Failed to send message:", err);
+
+        const currentState = useChatStore.getState();
+        const count =
+          currentState.messagesBySession[effectiveSessionKey]?.length ?? knownCount;
+        // Start polling immediately to reduce final-message display latency.
+        pollForResponse(effectiveSessionKey, count);
+      } catch (error) {
+        console.error("[useChatActions] sendMessage failed:", error);
       }
     },
-    [queryClient, pollForResponse],
+    [pollForResponse, queryClient],
   );
 
-  /**
-   * Abort the current streaming response.
-   */
   const abortStreaming = useCallback(async () => {
     stopPolling();
-    const { selectedSessionId, stopStreaming } = useChatStore.getState();
+
+    const state = useChatStore.getState();
+    const sessionKey = state.selectedSessionId;
+    if (!sessionKey) {
+      state.stopStreaming();
+      return;
+    }
+    const rpcSessionKey = normalizeSessionKeyForRpc(
+      sessionKey,
+      state.selectedAgentId,
+    );
 
     try {
-      await gateway.request("chat.abort", {
-        sessionKey: selectedSessionId,
-      });
-    } catch (err) {
-      console.warn("[useChatActions] Abort failed:", err);
+      const params: Record<string, unknown> = { sessionKey: rpcSessionKey };
+      if (state.streamingRunId) {
+        params.runId = state.streamingRunId;
+      }
+      await gateway.request("chat.abort", params);
+    } catch (error) {
+      const msg = String(error);
+      if (!/no_active_run/i.test(msg)) {
+        console.warn("[useChatActions] chat.abort failed:", error);
+      }
+    } finally {
+      state.stopStreaming();
     }
-
-    stopStreaming();
   }, [stopPolling]);
 
-  /**
-   * Reset (clear) a session's messages on the server.
-   */
   const resetSession = useCallback(
     async (sessionKey: string) => {
+      const state = useChatStore.getState();
+      const rpcSessionKey = normalizeSessionKeyForRpc(sessionKey, state.selectedAgentId);
       try {
-        await gateway.request("sessions.reset", { sessionKey });
-        useChatStore.getState().clearSession(sessionKey);
+        await callSessionMutation("sessions.reset", rpcSessionKey);
+        state.clearSession(sessionKey);
+        if (rpcSessionKey !== sessionKey) {
+          state.clearSession(rpcSessionKey);
+        }
         queryClient.invalidateQueries({
-          queryKey: messagesQueryKey(sessionKey),
+          queryKey: messagesQueryKey(rpcSessionKey),
         });
-      } catch (err) {
-        console.error("[useChatActions] Reset session failed:", err);
+      } catch (error) {
+        console.error("[useChatActions] resetSession failed:", error);
       }
     },
     [queryClient],
   );
 
-  /**
-   * Delete a session from the server.
-   */
   const deleteSession = useCallback(
     async (sessionKey: string) => {
-      try {
-        await gateway.request("sessions.delete", { sessionKey });
-        const state = useChatStore.getState();
-        state.clearSession(sessionKey);
-
-        if (state.selectedSessionId === sessionKey) {
-          state.selectSession(null);
-        }
-
-        queryClient.invalidateQueries({
-          queryKey: sessionsQueryKey(state.selectedAgentId ?? undefined),
-        });
-      } catch (err) {
-        console.error("[useChatActions] Delete session failed:", err);
+      const state = useChatStore.getState();
+      const rpcSessionKey = normalizeSessionKeyForRpc(sessionKey, state.selectedAgentId);
+      const isMainSession = /(^main$)|(:main$)/.test(rpcSessionKey);
+      if (isMainSession) {
+        return;
       }
+
+      try {
+        await callSessionMutation("sessions.delete", rpcSessionKey);
+      } catch (error) {
+        try {
+          await callSessionMutation("sessions.reset", rpcSessionKey);
+        } catch (fallbackError) {
+          console.error("[useChatActions] deleteSession failed:", error);
+          console.error("[useChatActions] fallback reset failed:", fallbackError);
+          return;
+        }
+      }
+
+      state.clearSession(sessionKey);
+      if (rpcSessionKey !== sessionKey) {
+        state.clearSession(rpcSessionKey);
+      }
+      if (
+        state.selectedSessionId === sessionKey ||
+        state.selectedSessionId === rpcSessionKey
+      ) {
+        state.selectSession(null);
+      }
+
+      queryClient.invalidateQueries({
+        queryKey: messagesQueryKey(rpcSessionKey),
+      });
+      queryClient.invalidateQueries({
+        queryKey: sessionsQueryKey(state.selectedAgentId ?? undefined),
+      });
     },
     [queryClient],
   );

@@ -6,6 +6,8 @@ export interface GatewayConfig {
   name: string;
   url: string;
   token: string;
+  scopes?: string[];
+  deviceId?: string;
   deviceToken?: string;
   isDefault?: boolean;
 }

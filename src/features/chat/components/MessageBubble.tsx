@@ -19,7 +19,11 @@ export const MessageBubble = memo(function MessageBubble({
     case "user":
       return <UserMessageBubble message={message as UserMessage} />;
     case "assistant":
-      return <AssistantMessageBubble message={message as AssistantMessage} />;
+      return (
+        <AssistantMessageBubble
+          message={message as AssistantMessage}
+        />
+      );
     case "tool":
       return <ToolCallBubble message={message as ToolCallMessage} />;
     case "system":

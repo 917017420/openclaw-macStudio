@@ -1,161 +1,259 @@
-// Hook: useChatEvents — subscribes to Gateway chat/agent events and routes to store
-
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { gateway } from "@/lib/gateway";
-import type { GatewayEvent } from "@/lib/gateway";
 import { useChatStore } from "@/features/chat/store";
+import { useConnectionStore } from "@/features/connection/store";
 import { SESSIONS_QUERY_KEY } from "./useSessions";
 import { messagesQueryKey } from "./useSessionMessages";
-import { createAssistantMessage } from "@/features/chat/utils";
-import { useConnectionStore } from "@/features/connection/store";
+import {
+  extractMessagesFromResponse,
+  parseChatEventPayload,
+} from "@/features/chat/utils/message-pipeline";
 
-/**
- * Subscribes to Gateway `chat` and `agent` events.
- *
- * Server event structure:
- * - `agent` events carry streaming content: { stream, text, phase, session, run, aseq }
- *   - stream=lifecycle + phase=start/end → streaming boundaries
- *   - stream=assistant + text=... → cumulative full text (NOT delta)
- * - `chat` events are summary notifications
- *
- * Routing strategy: always use `selectedSessionId` from the store.
- * The sendMessage action sets this BEFORE calling chat.send.
- */
+const TERMINAL_EVENT_DEDUPE_WINDOW_MS = 15_000;
+
+function tryParseObject(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+type ParsedAgentEvent = {
+  runId: string | null;
+  sessionKey: string | null;
+  stream: string | null;
+  phase: string | null;
+  text: string | null;
+};
+
+function parseAgentEventPayload(payload: unknown): ParsedAgentEvent {
+  const root = tryParseObject(payload) ?? {};
+  const data = tryParseObject(root.data) ?? null;
+  const run = tryParseObject(root.run) ?? null;
+  const session = tryParseObject(root.session) ?? null;
+
+  const runId =
+    readString(root.runId) ??
+    readString(root.run_id) ??
+    readString(root.run) ??
+    readString(run?.id) ??
+    readString(run?.runId) ??
+    null;
+
+  const sessionKey =
+    readString(root.sessionKey) ??
+    readString(root.session_key) ??
+    readString(root.sessionId) ??
+    readString(root.session_id) ??
+    readString(root.session) ??
+    readString(root.key) ??
+    readString(session?.key) ??
+    readString(session?.sessionKey) ??
+    readString(session?.sessionId) ??
+    readString(run?.sessionKey) ??
+    readString(run?.sessionId) ??
+    readString(run?.key) ??
+    null;
+
+  const text =
+    readString(root.text) ??
+    readString(root.delta) ??
+    readString(data?.text) ??
+    readString(data?.delta) ??
+    null;
+
+  return {
+    runId,
+    sessionKey,
+    stream: readString(root.stream)?.toLowerCase() ?? null,
+    phase: readString(root.phase)?.toLowerCase() ?? null,
+    text,
+  };
+}
+
+function isSessionKey(value: string): boolean {
+  return value === "main" || /^agent:[^:]+:.+/.test(value);
+}
+
+function resolveMainAliasKey(store: ReturnType<typeof useChatStore.getState>): string | null {
+  const selected = store.selectedSessionId;
+  if (selected && /(^main$)|(:main$)/.test(selected)) {
+    return selected;
+  }
+  const streaming = store.streamingSessionKey;
+  if (streaming && /(^main$)|(:main$)/.test(streaming)) {
+    return streaming;
+  }
+  if (store.selectedAgentId) {
+    return `agent:${store.selectedAgentId}:main`;
+  }
+  return "main";
+}
+
+function normalizeSessionKey(raw: string, selectedAgentId: string | null): string {
+  if (raw === "main") {
+    return selectedAgentId ? `agent:${selectedAgentId}:main` : "main";
+  }
+  if (isSessionKey(raw)) return raw;
+  if (selectedAgentId) return `agent:${selectedAgentId}:${raw}`;
+  return raw;
+}
+
+function resolveEventSessionKey(raw: string | null): string | null {
+  const store = useChatStore.getState();
+  if (!raw) {
+    return store.streamingSessionKey ?? store.selectedSessionId;
+  }
+  if (raw === "main") {
+    return resolveMainAliasKey(store);
+  }
+
+  const mapped = store.resolveSessionKey(raw);
+  if (mapped) {
+    return mapped;
+  }
+
+  const normalized = normalizeSessionKey(raw, store.selectedAgentId);
+  if (normalized !== raw) {
+    store.mapSession(raw, normalized);
+  }
+  return normalized;
+}
+
+async function syncMessagesFromHistory(sessionKey: string): Promise<void> {
+  try {
+    const historyRes = await gateway.request<unknown>("chat.history", { sessionKey });
+    const messages = extractMessagesFromResponse(historyRes, sessionKey);
+    if (messages.length > 0) {
+      useChatStore.getState().setMessages(sessionKey, messages);
+    }
+  } catch {
+    // Ignore sync errors; polling/query invalidation remains as fallback.
+  }
+}
+
 export function useChatEvents() {
   const isConnected = useConnectionStore((s) => s.state === "connected");
   const queryClient = useQueryClient();
+  const terminalEventSeenRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (!isConnected) return;
 
-    console.log("[useChatEvents] Setting up event subscriptions");
+    const subscription = gateway.on("chat", (payload: unknown) => {
+      const parsed = parseChatEventPayload(payload);
+      const sessionKey = resolveEventSessionKey(parsed.sessionKey);
+      if (!sessionKey) return;
 
-    const subs: Array<{ unsubscribe: () => void }> = [];
+      const store = useChatStore.getState();
+      const activeRunId = store.streamingRunId;
+      const hasActiveRun =
+        store.isStreaming &&
+        store.streamingSessionKey === sessionKey &&
+        store.streamingMessageId !== "__polling__";
+      const isOtherRun =
+        Boolean(parsed.runId) &&
+        Boolean(activeRunId) &&
+        parsed.runId !== activeRunId &&
+        hasActiveRun;
 
-    // Wildcard event logger (always on for debugging)
-    subs.push(
-      gateway.on<GatewayEvent>("*", (event) => {
-        console.log("[Gateway Event *]", JSON.stringify(event).slice(0, 300));
-      }),
-    );
+      if (parsed.state === "delta") {
+        // Disabled by design: do not render incremental text. We only display
+        // finalized assistant content from server history.
+        return;
+      }
 
-    // ---- Agent events: streaming content ----
-    subs.push(
-      gateway.on("agent", (payload: unknown) => {
-        const data = payload as Record<string, unknown>;
-        const stream = data.stream as string | undefined;
-        const store = useChatStore.getState();
-
-        // Always route to currently selected session
-        const sessionKey = store.selectedSessionId;
-
-        console.log("[useChatEvents] >>> agent event received:", {
-          stream,
-          phase: data.phase,
-          textLen: data.text ? String(data.text).length : 0,
+      if (parsed.state === "final" || parsed.state === "aborted") {
+        const terminalSig = [
+          parsed.state,
           sessionKey,
-          isStreaming: store.isStreaming,
-          streamingMsgId: store.streamingMessageId,
-          allSessionKeys: Object.keys(store.messagesBySession),
-          msgCountInSession: sessionKey
-            ? (store.messagesBySession[sessionKey]?.length ?? 0)
-            : "N/A",
-        });
-
-        if (!sessionKey) {
-          console.warn(
-            "[useChatEvents] No session selected, dropping event. " +
-            "selectedAgentId:", store.selectedAgentId,
-          );
+          parsed.runId ?? "no-run",
+        ].join("|");
+        const now = Date.now();
+        const seenAt = terminalEventSeenRef.current.get(terminalSig);
+        if (seenAt && now - seenAt < TERMINAL_EVENT_DEDUPE_WINDOW_MS) {
           return;
         }
+        terminalEventSeenRef.current.set(terminalSig, now);
+        if (terminalEventSeenRef.current.size > 300) {
+          for (const [key, ts] of terminalEventSeenRef.current) {
+            if (now - ts > TERMINAL_EVENT_DEDUPE_WINDOW_MS * 4) {
+              terminalEventSeenRef.current.delete(key);
+            }
+          }
+        }
 
-        switch (stream) {
-          case "lifecycle": {
-            const phase = data.phase as string;
-            if (phase === "start") {
-              if (!store.streamingMessageId) {
-                const msg = createAssistantMessage({ isStreaming: true });
-                store.addMessage(sessionKey, msg);
-                store.startStreaming(sessionKey, msg.id);
-                console.log(
-                  "[useChatEvents] Created streaming message:",
-                  msg.id,
-                  "in session:",
-                  sessionKey,
-                );
-              } else {
-                console.log(
-                  "[useChatEvents] lifecycle:start but already streaming:",
-                  store.streamingMessageId,
-                );
+        if (!isOtherRun) {
+          if (parsed.state === "final") {
+            void (async () => {
+              await syncMessagesFromHistory(sessionKey);
+              const latest = useChatStore.getState();
+              if (latest.isStreaming && latest.streamingSessionKey === sessionKey) {
+                latest.stopStreaming();
               }
-            } else if (phase === "end") {
-              if (store.streamingMessageId) {
-                store.finalizeStream(sessionKey, store.streamingMessageId);
-                console.log("[useChatEvents] Finalized stream for session:", sessionKey);
-              }
-              // Refresh both session list AND message history
+
               queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
               queryClient.invalidateQueries({
                 queryKey: messagesQueryKey(sessionKey),
               });
-            }
-            break;
+            })();
+            return;
           }
 
-          case "assistant": {
-            const text = data.text as string | undefined;
-            if (text === undefined) {
-              console.log("[useChatEvents] assistant event with no text, skipping");
-              break;
-            }
-
-            if (!store.streamingMessageId) {
-              // No lifecycle:start received yet — create message inline
-              const msg = createAssistantMessage({
-                isStreaming: true,
-                content: text,
-              });
-              store.addMessage(sessionKey, msg);
-              store.startStreaming(sessionKey, msg.id);
-              console.log(
-                "[useChatEvents] Created streaming msg (no lifecycle):",
-                msg.id,
-                "content:",
-                text.slice(0, 100),
-              );
-            } else {
-              store.setStreamContent(
-                sessionKey,
-                store.streamingMessageId,
-                text,
-              );
-            }
-            break;
+          if (store.isStreaming && store.streamingSessionKey === sessionKey) {
+            store.stopStreaming();
           }
-
-          default:
-            console.log("[useChatEvents] Unhandled stream type:", stream, "data keys:", Object.keys(data));
-            break;
         }
-      }),
-    );
 
-    // ---- Chat events: summary notifications ----
-    subs.push(
-      gateway.on("chat", (payload: unknown) => {
-        console.log("[useChatEvents] chat event:", payload);
         queryClient.invalidateQueries({ queryKey: SESSIONS_QUERY_KEY });
-      }),
-    );
+        queryClient.invalidateQueries({
+          queryKey: messagesQueryKey(sessionKey),
+        });
+        return;
+      }
+
+      if (parsed.state === "error") {
+        // Keep loading state for transient tool-phase errors.
+        void syncMessagesFromHistory(sessionKey);
+        queryClient.invalidateQueries({
+          queryKey: messagesQueryKey(sessionKey),
+        });
+      }
+    });
+
+    const agentSubscription = gateway.on("agent", (payload: unknown) => {
+      const parsed = parseAgentEventPayload(payload);
+      const sessionKey = resolveEventSessionKey(parsed.sessionKey);
+      if (!sessionKey) return;
+
+      if (parsed.stream === "assistant" && parsed.text) return;
+
+      if (parsed.stream === "lifecycle" && parsed.phase === "end") {
+        void syncMessagesFromHistory(sessionKey);
+        queryClient.invalidateQueries({
+          queryKey: messagesQueryKey(sessionKey),
+        });
+      }
+    });
 
     return () => {
-      console.log("[useChatEvents] Cleaning up event subscriptions");
-      for (const sub of subs) {
-        sub.unsubscribe();
-      }
+      subscription.unsubscribe();
+      agentSubscription.unsubscribe();
     };
   }, [isConnected, queryClient]);
 }

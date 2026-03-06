@@ -35,6 +35,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 
 /** Base reconnect delay in ms */
 const BASE_RECONNECT_DELAY = 1_000;
+const DEBUG_GATEWAY = false;
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -113,6 +114,19 @@ export class GatewayClient {
     try {
       await this.createConnection();
     } catch (err) {
+      const message = String(err);
+      if (message.includes("pairing required")) {
+        const requestIdMatch = message.match(/requestId:\s*([^\s)]+)/i);
+        const requestId = requestIdMatch?.[1];
+        const requestIdHint = requestId ? ` Request ID: ${requestId}` : "";
+        this._error = {
+          code: "PAIRING_REQUIRED",
+          message: `Pairing required. Approve this device on the Gateway side.${requestIdHint}`,
+          timestamp: Date.now(),
+        };
+        this.setState("pairing_required");
+        throw err;
+      }
       this.handleError("CONNECTION_FAILED", String(err));
       throw err;
     }
@@ -217,24 +231,29 @@ export class GatewayClient {
 
     this.ws.addListener((msg) => {
       if (typeof msg === "string") {
-        console.log("[GatewayClient] WS string message (unexpected):", (msg as string).slice(0, 200));
+        if (DEBUG_GATEWAY) {
+          console.log("[GatewayClient] WS string message (unexpected):", (msg as string).slice(0, 200));
+        }
         return;
       }
 
       const wsMsg = msg as { type?: string; data?: string };
+      const wsType = typeof wsMsg.type === "string" ? wsMsg.type.toLowerCase() : "";
 
-      if (wsMsg.type === "Close") {
+      if (wsType === "close" || wsType === "closed") {
         this.handleClose();
         return;
       }
 
-      if (wsMsg.type === "Text" && wsMsg.data) {
+      if (wsType === "text" && wsMsg.data) {
         this.handleMessage(wsMsg.data);
         return;
       }
 
       // Log any unhandled message types
-      console.log("[GatewayClient] Unhandled WS message type:", wsMsg.type);
+      if (DEBUG_GATEWAY) {
+        console.log("[GatewayClient] Unhandled WS message type:", wsMsg.type);
+      }
     });
 
     // Wait for challenge and authenticate
@@ -261,8 +280,8 @@ export class GatewayClient {
         this._authHandler = null;
 
         try {
-          // Build connect params (token-only, no device identity needed)
-          const params = buildConnectParams(this.config!);
+          // Build connect params (token + persisted device identity)
+          const params = await buildConnectParams(this.config!, nonce);
           const id = generateRequestId();
           const req = createRequest(id, "connect", params);
 
@@ -272,25 +291,45 @@ export class GatewayClient {
               clearTimeout(timeout);
 
               // Log the FULL hello-ok response for debugging
-              console.log(
-                "[Gateway] Full hello-ok response:",
-                JSON.stringify(payload, null, 2),
-              );
+              if (DEBUG_GATEWAY) {
+                console.log(
+                  "[Gateway] Full hello-ok response:",
+                  JSON.stringify(payload, null, 2),
+                );
+              }
 
               const authResult = parseAuthResponse(payload);
               if (authResult) {
                 this._authResult = authResult;
-                console.log("[Gateway] Connected:", authResult.connId);
-                console.log("[Gateway] Available methods:", authResult.methods);
-                console.log("[Gateway] Available events:", authResult.events);
-                console.log("[Gateway] Snapshot keys:", Object.keys(authResult.snapshot));
+                if (DEBUG_GATEWAY) {
+                  console.log("[Gateway] Connected:", authResult.connId);
+                  console.log("[Gateway] Available methods:", authResult.methods);
+                  console.log("[Gateway] Available events:", authResult.events);
+                  console.log("[Gateway] Snapshot keys:", Object.keys(authResult.snapshot));
+                }
                 this.setState("connected");
                 this.startHeartbeat();
 
                 // Try to subscribe to events after connection
                 this.subscribeToEvents(authResult.events).then(
-                  () => console.log("[Gateway] Event subscription complete"),
-                  (err) => console.warn("[Gateway] Event subscription failed:", err),
+                  () => {
+                    if (DEBUG_GATEWAY) {
+                      console.log("[Gateway] Event subscription complete");
+                    }
+                    if (this._error?.code === "EVENT_SUBSCRIPTION_FAILED") {
+                      this._error = null;
+                      this.notifyStateListeners();
+                    }
+                  },
+                  (err) => {
+                    if (DEBUG_GATEWAY) {
+                      console.warn("[Gateway] Event subscription failed:", err);
+                    }
+                    this.setWarning(
+                      "EVENT_SUBSCRIPTION_FAILED",
+                      "Connected, but failed to subscribe to real-time events. Message updates may be delayed.",
+                    );
+                  },
                 );
 
                 resolve();
@@ -321,7 +360,7 @@ export class GatewayClient {
   private handleMessage(raw: string): void {
     // Log ALL raw messages (truncated) for diagnostics
     const isTickEvent = raw.includes('"tick"');
-    if (!isTickEvent) {
+    if (DEBUG_GATEWAY && !isTickEvent) {
       console.log("[GatewayClient] Raw message:", raw.slice(0, 500));
     }
 
@@ -353,11 +392,34 @@ export class GatewayClient {
     clearTimeout(pending.timer);
 
     if (res.ok) {
-      pending.resolve(res.payload);
+      pending.resolve(this.normalizeResponsePayload(res.payload));
     } else {
       const errMsg = res.error?.message ?? "Unknown error";
-      pending.reject(new Error(`RPC error: ${errMsg}`));
+      const details = (res.error?.details as { requestId?: string } | undefined) ?? undefined;
+      const requestIdHint = details?.requestId ? ` (requestId: ${details.requestId})` : "";
+      pending.reject(new Error(`RPC error: ${errMsg}${requestIdHint}`));
     }
+  }
+
+  private normalizeResponsePayload(payload: unknown): unknown {
+    if (typeof payload !== "string") {
+      return payload;
+    }
+    const trimmed = payload.trim();
+    if (!trimmed) {
+      return payload;
+    }
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return payload;
+      }
+    }
+    return payload;
   }
 
   private handleEvent(event: GatewayEvent): void {
@@ -368,16 +430,20 @@ export class GatewayClient {
     this._eventLog.push({ event: event.event, time: this._lastEventAt, payloadSnippet: snippet });
     if (this._eventLog.length > 20) this._eventLog.shift();
 
-    console.log(
-      `[GatewayClient] Event #${this._eventCount} "${event.event}" (seq=${event.seq}):`,
-      snippet,
-    );
+    if (DEBUG_GATEWAY) {
+      console.log(
+        `[GatewayClient] Event #${this._eventCount} "${event.event}" (seq=${event.seq}):`,
+        snippet,
+      );
+    }
 
     const listeners = this.eventListeners.get(event.event);
     const listenerCount = listeners?.size ?? 0;
-    console.log(
-      `[GatewayClient] Dispatching "${event.event}" to ${listenerCount} listener(s)`,
-    );
+    if (DEBUG_GATEWAY) {
+      console.log(
+        `[GatewayClient] Dispatching "${event.event}" to ${listenerCount} listener(s)`,
+      );
+    }
 
     if (listeners) {
       for (const cb of listeners) {
@@ -420,7 +486,9 @@ export class GatewayClient {
    */
   private async subscribeToEvents(availableEvents: string[]): Promise<void> {
     if (availableEvents.length === 0) {
-      console.log("[Gateway] No events listed, skipping subscription");
+      if (DEBUG_GATEWAY) {
+        console.log("[Gateway] No events listed, skipping subscription");
+      }
       return;
     }
 
@@ -430,46 +498,95 @@ export class GatewayClient {
 
     if (eventNames.length === 0) return;
 
-    console.log("[Gateway] Attempting to subscribe to events:", eventNames);
+    if (DEBUG_GATEWAY) {
+      console.log("[Gateway] Attempting to subscribe to events:", eventNames);
+    }
+
+    const supportedMethods = new Set(this._authResult?.methods ?? []);
+    const shouldProbeAll = supportedMethods.size === 0;
+    const supportsEventsSubscribe =
+      shouldProbeAll || supportedMethods.has("events.subscribe");
+    const supportsSubscribe = shouldProbeAll || supportedMethods.has("subscribe");
+
+    let subscribed = false;
 
     // Strategy 1: events.subscribe RPC
-    try {
-      const res = await this.request<unknown>("events.subscribe", {
-        events: eventNames,
-      });
-      console.log("[Gateway] events.subscribe succeeded:", res);
-      return;
-    } catch (err) {
-      console.log("[Gateway] events.subscribe not available:", err);
-    }
-
-    // Strategy 2: subscribe RPC
-    try {
-      const res = await this.request<unknown>("subscribe", {
-        events: eventNames,
-      });
-      console.log("[Gateway] subscribe succeeded:", res);
-      return;
-    } catch (err) {
-      console.log("[Gateway] subscribe not available:", err);
-    }
-
-    // Strategy 3: Individual event subscriptions
-    for (const eventName of eventNames) {
+    if (supportsEventsSubscribe) {
       try {
         const res = await this.request<unknown>("events.subscribe", {
-          event: eventName,
+          events: eventNames,
         });
-        console.log(`[Gateway] Subscribed to ${eventName}:`, res);
-      } catch {
-        // Silently skip — not all gateways support this
+        if (DEBUG_GATEWAY) {
+          console.log("[Gateway] events.subscribe succeeded:", res);
+        }
+        subscribed = true;
+        return;
+      } catch (err) {
+        if (DEBUG_GATEWAY) {
+          console.log("[Gateway] events.subscribe not available:", err);
+        }
+      }
+    } else {
+      if (DEBUG_GATEWAY) {
+        console.log("[Gateway] events.subscribe not advertised by server, skipping");
       }
     }
 
-    console.log(
-      "[Gateway] Event subscription attempts complete. " +
-      "If events still don't arrive, the server may auto-subscribe based on role/scopes.",
-    );
+    // Strategy 2: subscribe RPC
+    if (supportsSubscribe) {
+      try {
+        const res = await this.request<unknown>("subscribe", {
+          events: eventNames,
+        });
+        if (DEBUG_GATEWAY) {
+          console.log("[Gateway] subscribe succeeded:", res);
+        }
+        subscribed = true;
+        return;
+      } catch (err) {
+        if (DEBUG_GATEWAY) {
+          console.log("[Gateway] subscribe not available:", err);
+        }
+      }
+    } else {
+      if (DEBUG_GATEWAY) {
+        console.log("[Gateway] subscribe not advertised by server, skipping");
+      }
+    }
+
+    // Strategy 3: Individual event subscriptions
+    if (supportsEventsSubscribe) {
+      for (const eventName of eventNames) {
+        try {
+          const res = await this.request<unknown>("events.subscribe", {
+            event: eventName,
+          });
+          if (DEBUG_GATEWAY) {
+            console.log(`[Gateway] Subscribed to ${eventName}:`, res);
+          }
+          subscribed = true;
+        } catch {
+          // Silently skip — not all gateways support this
+        }
+      }
+    }
+
+    if (!subscribed) {
+      if (DEBUG_GATEWAY) {
+        console.log(
+          "[Gateway] No explicit subscribe method available. " +
+          "Assuming server pushes events automatically for this role.",
+        );
+      }
+      return;
+    }
+
+    if (DEBUG_GATEWAY) {
+      console.log(
+        "[Gateway] Event subscription attempts complete. " +
+        "If events still don't arrive, the server may auto-subscribe based on role/scopes.",
+      );
+    }
   }
 
   private scheduleReconnect(): void {
@@ -512,9 +629,13 @@ export class GatewayClient {
       this._authHandler = null;
     }
 
+    this.notifyStateListeners();
+  }
+
+  private notifyStateListeners(): void {
     for (const cb of this.stateListeners) {
       try {
-        cb(state);
+        cb(this._state);
       } catch (err) {
         console.error("State listener error:", err);
       }
@@ -526,11 +647,22 @@ export class GatewayClient {
     this.setState("error");
   }
 
+  private setWarning(code: string, message: string): void {
+    this._error = { code, message, timestamp: Date.now() };
+    this.notifyStateListeners();
+  }
+
   private async send(data: string): Promise<void> {
     if (!this.ws) {
       throw new Error("WebSocket not connected");
     }
-    await this.ws.send(data);
+    try {
+      await this.ws.send(data);
+    } catch (err) {
+      console.warn("[GatewayClient] send failed, marking connection as closed:", err);
+      this.handleClose();
+      throw err;
+    }
   }
 
   private clearTimers(): void {

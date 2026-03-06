@@ -55,18 +55,29 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   },
 
   connect: async (configId) => {
-    const config = get().configs.find((c) => c.id === configId);
-    if (!config) throw new Error("Config not found");
+    const existingConfig = get().configs.find((c) => c.id === configId);
+    if (!existingConfig) throw new Error("Config not found");
+    const config = { ...existingConfig };
 
     set({ activeConfigId: configId, error: null });
 
     // Listen for state changes
     const sub = gateway.onStateChange((state) => {
-      set({ state, error: gateway.error });
+      const normalizedState: ConnectionState =
+        state === "reconnecting" ? "disconnected" : state;
+      set({ state: normalizedState, error: gateway.error });
     });
 
     try {
       await gateway.connect(config);
+
+      // Persist issued device token/device identity for future reconnects.
+      const auth = gateway.authResult;
+      if (auth?.deviceToken) {
+        get().updateConfig(configId, {
+          deviceToken: auth.deviceToken,
+        });
+      }
     } catch (err) {
       sub.unsubscribe();
       throw err;

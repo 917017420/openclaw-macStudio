@@ -5,6 +5,7 @@ import type { AssistantMessage } from "@/lib/gateway";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { StreamingIndicator } from "./StreamingIndicator";
+import { MessageCopyButton } from "./MessageCopyButton";
 
 interface AssistantMessageBubbleProps {
   message: AssistantMessage;
@@ -16,10 +17,18 @@ export const AssistantMessageBubble = memo(function AssistantMessageBubble({
   const isStreaming = message.isStreaming ?? false;
   const hasContent = message.content.length > 0;
   const hasReasoning = !!message.reasoning;
+  const copyText = hasContent ? message.content : (message.reasoning ?? "");
+  const contentToRender = hasContent ? message.content : "";
+  const hasRenderedContent = contentToRender.length > 0;
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-chat-assistant-bubble px-4 py-2.5 shadow-sm ring-1 ring-border/50">
+      <div className="group relative max-w-[86%] rounded-2xl rounded-bl-md border border-border/75 bg-chat-assistant-bubble px-4 py-3 shadow-[0_6px_20px_rgba(0,0,0,0.06)]">
+        <MessageCopyButton
+          text={copyText}
+          className="absolute right-2 top-2 text-text-tertiary opacity-0 hover:bg-surface-2 hover:text-text-primary group-hover:opacity-100"
+        />
+
         {/* Reasoning block */}
         {hasReasoning && (
           <ThinkingBlock
@@ -29,9 +38,9 @@ export const AssistantMessageBubble = memo(function AssistantMessageBubble({
         )}
 
         {/* Content */}
-        {hasContent ? (
+        {hasRenderedContent ? (
           <MarkdownRenderer
-            content={message.content}
+            content={contentToRender}
             plainMode={isStreaming}
           />
         ) : isStreaming && !hasReasoning ? (
@@ -39,7 +48,7 @@ export const AssistantMessageBubble = memo(function AssistantMessageBubble({
         ) : null}
 
         {/* Streaming cursor at end of content */}
-        {isStreaming && hasContent && (
+        {isStreaming && hasRenderedContent && (
           <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-text-primary" />
         )}
       </div>

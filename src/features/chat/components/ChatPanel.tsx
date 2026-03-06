@@ -32,7 +32,7 @@ export const ChatPanel = memo(function ChatPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-chat-surface">
       <ChatHeader />
       <MessageList />
       <MessageComposer />

@@ -22,22 +22,24 @@ export const ChatSidebar = memo(function ChatSidebar() {
 
   /** Start new chat: deselect session so next send creates a new one */
   const handleNewChat = useCallback(() => {
-    selectSession(null);
-  }, [selectSession]);
+    if (!selectedAgentId) return;
+    const sessionKey = `agent:${selectedAgentId}:${crypto.randomUUID()}`;
+    selectSession(sessionKey);
+  }, [selectSession, selectedAgentId]);
 
   return (
-    <div className="flex h-full w-60 flex-col border-r border-border bg-surface-1">
+    <div className="flex h-full w-[17.5rem] shrink-0 flex-col border-r border-border/80 bg-surface-1/90 backdrop-blur">
       {/* Agent picker */}
-      <div className="border-b border-border">
+      <div className="border-b border-border/80 px-2 py-2">
         <AgentPicker />
       </div>
 
       {/* New chat button */}
-      <div className="px-2 py-2">
+      <div className="px-3 py-2.5">
         <button
           onClick={handleNewChat}
           disabled={!selectedAgentId}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-secondary transition-colors hover:border-primary hover:bg-primary-light hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm font-medium text-text-secondary shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/60 hover:bg-primary-light hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Plus size={14} />
           New Chat
