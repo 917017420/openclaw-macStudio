@@ -6,6 +6,7 @@
   min-height: 0;
   overflow: auto;
   padding: 20px;
+  container: sessions-page / inline-size;
   color: var(--text);
   scrollbar-gutter: stable both-edges;
   background:
@@ -248,7 +249,7 @@
 
 .sessions-layout {
   display: grid;
-  grid-template-columns: minmax(700px, 1.22fr) minmax(440px, 0.9fr);
+  grid-template-columns: minmax(0, 1.22fr) minmax(0, 0.9fr);
   gap: 18px;
   min-height: 0;
   flex: 1 1 auto;
@@ -256,6 +257,7 @@
 }
 
 .sessions-panel {
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-radius: 22px;
@@ -290,6 +292,7 @@
 
 .sessions-panel__scroll {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -469,7 +472,13 @@
 .sessions-table-head,
 .sessions-table-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1.05fr) 0.75fr 0.8fr 0.8fr minmax(170px, 0.9fr);
+  grid-template-columns:
+    minmax(0, 1.3fr)
+    minmax(0, 1.05fr)
+    minmax(96px, 0.75fr)
+    minmax(104px, 0.8fr)
+    minmax(92px, 0.8fr)
+    minmax(0, 0.9fr);
   gap: 12px;
   align-items: center;
 }
@@ -490,6 +499,7 @@
 .sessions-table-body {
   display: flex;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
   gap: 8px;
@@ -498,14 +508,19 @@
 }
 
 .sessions-table-row {
+  appearance: none;
+  -webkit-appearance: none;
   position: relative;
   width: 100%;
+  box-sizing: border-box;
   text-align: left;
   border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
   border-radius: 18px;
   padding: 14px 14px 14px 16px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--panel) 96%, transparent), color-mix(in srgb, var(--panel-strong) 88%, transparent));
+  color: inherit;
+  font: inherit;
   cursor: pointer;
   transition:
     border-color 150ms ease,
@@ -549,6 +564,15 @@
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent),
     0 16px 28px rgba(0, 0, 0, 0.16);
+}
+
+.sessions-table-row.active:hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 18px 30px rgba(0, 0, 0, 0.18);
 }
 
 .sessions-table-row.active::before {
@@ -847,18 +871,40 @@
   color: var(--muted);
 }
 
-@media (max-width: 1360px) {
+@container sessions-page (max-width: 1200px) {
   .sessions-layout {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-height: auto;
+    flex: 0 0 auto;
+  }
+
+  .sessions-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sessions-panel {
+    min-height: auto;
+  }
+
+  .sessions-panel__scroll--index,
+  .sessions-panel__scroll--detail {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
   }
 
   .sessions-panel__scroll--detail {
-    max-height: 70vh;
+    max-height: none;
+  }
+
+  .sessions-table-body {
+    overflow: visible;
   }
 }
 
-@media (max-width: 1040px) {
-  .sessions-summary-strip,
+@container sessions-page (max-width: 980px) {
   .sessions-detail-grid,
   .sessions-editor-grid,
   .sessions-filters-grid {
@@ -878,7 +924,7 @@
   }
 }
 
-@media (max-width: 820px) {
+@container sessions-page (max-width: 760px) {
   .sessions-page {
     padding: 16px;
   }
@@ -918,6 +964,11 @@
 
   .session-field--search {
     grid-column: auto;
+  }
+
+  .sessions-summary-pill__value {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .sessions-detail-hero__meta span::after {

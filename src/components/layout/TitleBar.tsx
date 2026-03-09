@@ -2,6 +2,25 @@ import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useConnectionStore } from "@/features/connection/store";
 
+type WindowControls = Pick<
+  ReturnType<typeof getCurrentWindow>,
+  "minimize" | "toggleMaximize" | "close"
+>;
+
+const browserWindowControls: WindowControls = {
+  minimize: async () => {},
+  toggleMaximize: async () => {},
+  close: async () => {},
+};
+
+function resolveWindowControls(): WindowControls {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return browserWindowControls;
+  }
+}
+
 function statusText(state: string): string {
   switch (state) {
     case "connected":
@@ -21,7 +40,7 @@ function statusText(state: string): string {
 
 export function TitleBar() {
   const state = useConnectionStore((s) => s.state);
-  const appWindow = getCurrentWindow();
+  const appWindow = resolveWindowControls();
   const dotClass =
     state === "connected"
       ? "status-dot connected"

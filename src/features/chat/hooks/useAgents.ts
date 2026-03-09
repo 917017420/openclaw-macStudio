@@ -8,6 +8,11 @@ import { useConnectionStore } from "@/features/connection/store";
 /** Query key for agent list */
 export const AGENTS_QUERY_KEY = ["agents"] as const;
 
+export interface AgentDirectoryResult {
+  agents: Agent[];
+  defaultId: string | null;
+}
+
 /**
  * Normalize a raw agent object from the server into our Agent type.
  * Handles various possible field naming conventions.
@@ -19,6 +24,11 @@ function normalizeAgent(raw: Record<string, unknown>): Agent | null {
 
   // name: could be 'name', 'display_name', 'displayName', or fallback to id
   const name = (raw.name ?? raw.display_name ?? raw.displayName ?? id) as string;
+
+  const identityRaw =
+    raw.identity && typeof raw.identity === "object"
+      ? (raw.identity as Record<string, unknown>)
+      : null;
 
   // status: could be 'status', 'state', or derive from boolean 'running'
   let status: Agent["status"] = "idle";
@@ -33,6 +43,13 @@ function normalizeAgent(raw: Record<string, unknown>): Agent | null {
     name,
     status,
     avatar: raw.avatar as string | undefined,
+    identity: identityRaw
+      ? {
+          name: typeof identityRaw.name === "string" ? identityRaw.name : undefined,
+          avatar: typeof identityRaw.avatar === "string" ? identityRaw.avatar : undefined,
+          emoji: typeof identityRaw.emoji === "string" ? identityRaw.emoji : undefined,
+        }
+      : undefined,
     description: (raw.description ?? raw.desc) as string | undefined,
     capabilities:
       raw.capabilities && typeof raw.capabilities === "object"
@@ -50,35 +67,56 @@ function normalizeAgent(raw: Record<string, unknown>): Agent | null {
   };
 }
 
-/**
- * Extract an array of agent-like objects from the server response.
- */
-function extractAgents(res: unknown): Agent[] {
-  // Direct array
+function extractAgents(res: unknown): AgentDirectoryResult {
   if (Array.isArray(res)) {
-    return res.map((r) => normalizeAgent(r as Record<string, unknown>)).filter(Boolean) as Agent[];
+    return {
+      agents: res.map((r) => normalizeAgent(r as Record<string, unknown>)).filter(Boolean) as Agent[],
+      defaultId: null,
+    };
   }
 
   if (res && typeof res === "object") {
     const obj = res as Record<string, unknown>;
+    const defaultIdCandidates = [obj.defaultId, obj.default_id, obj.defaultAgentId];
+    const defaultId =
+      defaultIdCandidates.find((value): value is string => typeof value === "string" && value.trim().length > 0) ?? null;
 
-    // Nested in a known key
     for (const key of ["agents", "items", "data", "list", "result"]) {
       if (key in obj && Array.isArray(obj[key])) {
-        return (obj[key] as Record<string, unknown>[])
-          .map(normalizeAgent)
-          .filter(Boolean) as Agent[];
+        return {
+          agents: (obj[key] as Record<string, unknown>[])
+            .map(normalizeAgent)
+            .filter(Boolean) as Agent[],
+          defaultId,
+        };
       }
     }
 
-    // Maybe the response IS a single agent object (has an id field)
     if ("id" in obj || "agent_id" in obj || "agentId" in obj) {
       const agent = normalizeAgent(obj);
-      return agent ? [agent] : [];
+      return {
+        agents: agent ? [agent] : [],
+        defaultId,
+      };
     }
   }
 
-  return [];
+  return { agents: [], defaultId: null };
+}
+
+async function fetchAgentsDirectory() {
+  return extractAgents(await gateway.request<unknown>("agents.list"));
+}
+
+export function useAgentsDirectory() {
+  const isConnected = useConnectionStore((s) => s.state === "connected");
+
+  return useQuery<AgentDirectoryResult>({
+    queryKey: AGENTS_QUERY_KEY,
+    queryFn: fetchAgentsDirectory,
+    enabled: isConnected,
+    staleTime: 60_000,
+  });
 }
 
 /**
@@ -88,17 +126,10 @@ function extractAgents(res: unknown): Agent[] {
 export function useAgents() {
   const isConnected = useConnectionStore((s) => s.state === "connected");
 
-  return useQuery<Agent[]>({
+  return useQuery<AgentDirectoryResult, Error, Agent[]>({
     queryKey: AGENTS_QUERY_KEY,
-    queryFn: async () => {
-      const res = await gateway.request<unknown>("agents.list");
-      console.log("[useAgents] Raw response:", JSON.stringify(res));
-
-      const agents = extractAgents(res);
-      console.log("[useAgents] Parsed agents:", agents);
-
-      return agents;
-    },
+    queryFn: fetchAgentsDirectory,
+    select: (result) => result.agents,
     enabled: isConnected,
     staleTime: 60_000,
   });

@@ -59,6 +59,11 @@ export interface Agent {
   id: string;
   name: string;
   avatar?: string;
+  identity?: {
+    name?: string;
+    avatar?: string;
+    emoji?: string;
+  };
   status: "running" | "idle" | "error";
   description?: string;
   capabilities?: AgentCapabilities;

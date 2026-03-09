@@ -11,7 +11,7 @@ import { SessionsPage } from "@/features/sessions";
 import { ControlUIPage } from "@/features/control";
 import { OverviewPage } from "@/features/overview";
 import { DebugPage } from "@/features/debug";
-import { LogsPage } from "@/features/logs";
+import { LogsPage } from "@/features/event-logs";
 import { NodesPage } from "@/features/nodes";
 import { SkillsPage } from "@/features/skills";
 import { UsagePage } from "@/features/usage";
@@ -58,6 +58,7 @@ export default function App() {
               <Route path="/logs" element={<LogsPage />} />
               <Route path="/nodes" element={<NodesPage />} />
               <Route path="/debug" element={<DebugPage />} />
+              <Route path="/config" element={<SettingsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/control-ui" element={<ControlUIPage />} />
             </Route>
