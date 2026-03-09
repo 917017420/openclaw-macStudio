@@ -27,6 +27,31 @@ export interface ConnectionError {
   code: string;
   message: string;
   timestamp: number;
+  stage?: string;
+  closeCode?: number;
+  closeReason?: string;
+}
+
+export interface GatewayHandshakeTraceEntry {
+  stage: string;
+  timestamp: number;
+  detail?: string;
+}
+
+export interface GatewayRuntimeContext {
+  clientId: string;
+  clientMode: string;
+  socketTransport: "tauri-plugin-websocket";
+  explicitOriginHeader: string | null;
+  locationHref: string | null;
+  locationOrigin: string | null;
+  locationProtocol: string | null;
+  locationHost: string | null;
+  documentBaseUri: string | null;
+  referrer: string | null;
+  userAgent: string | null;
+  platform: string | null;
+  tauriDetected: boolean;
 }
 
 /** Agent definition from Gateway */
@@ -63,23 +88,46 @@ export type ChatMessage =
   | ToolCallMessage
   | SystemMessage;
 
-export interface UserMessage {
+export interface ChatAttachment {
+  id: string;
+  dataUrl: string;
+  mimeType: string;
+  alt?: string;
+}
+
+export interface MessageToolCard {
+  kind: "call" | "result";
+  name: string;
+  args?: unknown;
+  text?: string;
+  toolCallId?: string;
+  status?: "started" | "completed" | "error";
+  error?: string;
+}
+
+interface ChatMessageBase {
+  raw?: unknown;
+  attachments?: ChatAttachment[];
+}
+
+export interface UserMessage extends ChatMessageBase {
   role: "user";
   id: string;
   content: string;
   timestamp: number;
 }
 
-export interface AssistantMessage {
+export interface AssistantMessage extends ChatMessageBase {
   role: "assistant";
   id: string;
   content: string;
   reasoning?: string;
   timestamp: number;
   isStreaming?: boolean;
+  toolCards?: MessageToolCard[];
 }
 
-export interface ToolCallMessage {
+export interface ToolCallMessage extends ChatMessageBase {
   role: "tool";
   id: string;
   toolName: string;
@@ -91,7 +139,7 @@ export interface ToolCallMessage {
   timestamp: number;
 }
 
-export interface SystemMessage {
+export interface SystemMessage extends ChatMessageBase {
   role: "system";
   id: string;
   content: string;

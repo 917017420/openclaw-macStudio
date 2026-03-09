@@ -253,23 +253,31 @@ function renderSessionDetailPanel(
   const headerStats = filteredUsage
     ? { totalTokens: filteredUsage.totalTokens, totalCost: filteredUsage.totalCost }
     : { totalTokens: usage?.totalTokens ?? 0, totalCost: usage?.totalCost ?? 0 };
-  const cursorIndicator = filteredUsage ? " (filtered)" : "";
+  const filteredBadge = filteredUsage
+    ? html`<span class="session-detail-badge">Filtered range</span>`
+    : nothing;
 
   return html`
     <div class="card session-detail-panel">
       <div class="session-detail-header">
         <div class="session-detail-header-left">
           <div class="session-detail-title">
-            ${displayLabel}
-            ${cursorIndicator ? html`<span style="font-size: 11px; color: var(--muted); margin-left: 8px;">${cursorIndicator}</span>` : nothing}
+            <span class="session-detail-title-text">${displayLabel}</span>
+            ${filteredBadge}
           </div>
         </div>
         <div class="session-detail-stats">
           ${
             usage
               ? html`
-            <span><strong>${formatTokens(headerStats.totalTokens)}</strong> tokens${cursorIndicator}</span>
-            <span><strong>${formatCost(headerStats.totalCost)}</strong>${cursorIndicator}</span>
+            <span class="session-detail-stat">
+              <span class="session-detail-stat-label">Tokens</span>
+              <strong>${formatTokens(headerStats.totalTokens)}</strong>
+            </span>
+            <span class="session-detail-stat">
+              <span class="session-detail-stat-label">Cost</span>
+              <strong>${formatCost(headerStats.totalCost)}</strong>
+            </span>
           `
               : nothing
           }
@@ -970,13 +978,17 @@ function renderSessionLogsCompact(
   return html`
     <div class="session-logs-compact">
       <div class="session-logs-header">
-        <span>Conversation <span style="font-weight: normal; color: var(--muted);">(${displayedCount} messages)</span></span>
+        <span class="session-logs-title-row">
+          <span>Conversation</span>
+          <span class="session-log-count">${displayedCount} messages</span>
+        </span>
         <button class="btn btn-sm usage-action-btn usage-secondary-btn" @click=${onToggleExpandedAll}>
           ${expandedAll ? "Collapse All" : "Expand All"}
         </button>
       </div>
-      <div class="usage-filters-inline" style="margin: 10px 12px;">
+      <div class="usage-filters-inline session-log-filters">
         <select
+          class="session-log-filter-select"
           multiple
           size="4"
           @change=${(event: Event) =>
@@ -992,6 +1004,7 @@ function renderSessionLogsCompact(
           <option value="toolResult" ?selected=${roleSelected.has("toolResult")}>Tool result</option>
         </select>
         <select
+          class="session-log-filter-select"
           multiple
           size="4"
           @change=${(event: Event) =>
@@ -1006,18 +1019,19 @@ function renderSessionLogsCompact(
               html`<option value=${tool} ?selected=${toolSelected.has(tool)}>${tool}</option>`,
           )}
         </select>
-        <label class="usage-filters-inline" style="gap: 6px;">
+        <label class="session-log-toggle">
           <input
             type="checkbox"
             .checked=${filters.hasTools}
             @change=${(event: Event) =>
               onFilterHasToolsChange((event.target as HTMLInputElement).checked)}
           />
-          Has tools
+          With tool calls
         </label>
         <input
+          class="session-log-search"
           type="text"
-          placeholder="Search conversation"
+          placeholder="Search messages"
           .value=${filters.query}
           @input=${(event: Event) => onFilterQueryChange((event.target as HTMLInputElement).value)}
         />
@@ -1061,7 +1075,7 @@ function renderSessionLogsCompact(
         ${
           filteredEntries.length === 0
             ? html`
-                <div class="muted" style="padding: 12px">No messages match the filters.</div>
+                <div class="session-logs-empty">No messages match the current filters.</div>
               `
             : nothing
         }

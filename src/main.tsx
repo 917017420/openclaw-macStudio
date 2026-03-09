@@ -1,8 +1,16 @@
-import "../upstream/ui/src/main.ts";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "@/App";
+import "@/styles/globals.css";
 
-const mount = document.getElementById("root");
-if (mount) {
-  mount.replaceWith(document.createElement("openclaw-app"));
-} else if (!document.querySelector("openclaw-app")) {
-  document.body.appendChild(document.createElement("openclaw-app"));
+const rootElement = document.getElementById("root");
+
+if (!rootElement) {
+  throw new Error("Root element #root not found");
 }
+
+ReactDOM.createRoot(rootElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);

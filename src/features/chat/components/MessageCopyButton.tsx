@@ -5,11 +5,15 @@ import { cn } from "@/lib/utils";
 interface MessageCopyButtonProps {
   text: string;
   className?: string;
+  title?: string;
+  copiedTitle?: string;
 }
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
   className,
+  title = "Copy message",
+  copiedTitle = "Copied",
 }: MessageCopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
@@ -26,15 +30,21 @@ export const MessageCopyButton = memo(function MessageCopyButton({
 
   return (
     <button
-      onClick={handleCopy}
+      type="button"
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleCopy();
+      }}
       disabled={!text}
       className={cn(
-        "rounded p-1 transition-opacity",
+        "rounded p-1 transition-[opacity,color,border-color,background-color] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
         "disabled:cursor-not-allowed disabled:opacity-30",
         className,
       )}
-      title={copied ? "Copied" : "Copy message"}
-      aria-label={copied ? "Copied" : "Copy message"}
+      title={copied ? copiedTitle : title}
+      aria-label={copied ? copiedTitle : title}
+      aria-live="polite"
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>

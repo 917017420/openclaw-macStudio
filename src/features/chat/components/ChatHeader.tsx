@@ -1,59 +1,99 @@
-import { memo, useEffect, useState } from "react";
-import { Check, RotateCcw, Trash2, X } from "lucide-react";
+import { memo, useCallback, useEffect } from "react";
+import { MessageSquarePlus } from "lucide-react";
 import { useChatStore } from "@/features/chat/store";
-import { useAgents } from "@/features/chat/hooks/useAgents";
 import { useSessions } from "@/features/chat/hooks/useSessions";
-import { useChatActions } from "@/features/chat/hooks/useChatActions";
+import { formatRelativeTime } from "@/lib/utils";
+import type { ChatSession } from "@/lib/gateway";
+import { AgentPicker } from "./AgentPicker";
+
+function formatSessionLabel(session: ChatSession) {
+  const title = session.title?.trim() || "Untitled";
+  return `${title} · ${session.messageCount} msg · ${formatRelativeTime(session.updatedAt)}`;
+}
 
 export const ChatHeader = memo(function ChatHeader() {
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectedSessionId = useChatStore((s) => s.selectedSessionId);
-  const { data: agents } = useAgents();
+  const selectSession = useChatStore((s) => s.selectSession);
   const { data: sessions } = useSessions(selectedAgentId);
-  const { resetSession, deleteSession } = useChatActions();
 
-  const agent = agents?.find((a) => a.id === selectedAgentId);
-  const session = sessions?.find((s) => s.id === selectedSessionId);
-  const isMainSession = selectedSessionId ? /(^main$)|(:main$)/.test(selectedSessionId) : false;
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const session = sessions?.find((candidate) => candidate.id === selectedSessionId);
+  const sessionExists = Boolean(session);
+  const isDraftSession = Boolean(
+    selectedSessionId &&
+      selectedAgentId &&
+      selectedSessionId.startsWith(`agent:${selectedAgentId}:`) &&
+      !sessionExists,
+  );
 
   useEffect(() => {
-    setConfirmingDelete(false);
-  }, [selectedSessionId]);
+    if (!selectedAgentId || !sessions) {
+      return;
+    }
+
+    const sessionBelongsToAgent = Boolean(
+      selectedSessionId && selectedSessionId.startsWith(`agent:${selectedAgentId}:`),
+    );
+    const matchesExistingSession = sessions.some((candidate) => candidate.id === selectedSessionId);
+
+    if (sessions.length === 0) {
+      if (selectedSessionId && !sessionBelongsToAgent) {
+        selectSession(null);
+      }
+      return;
+    }
+
+    if (!selectedSessionId || (!matchesExistingSession && !sessionBelongsToAgent)) {
+      selectSession(sessions[0].id);
+    }
+  }, [selectedAgentId, selectedSessionId, selectSession, sessions]);
+
+  const handleNewChat = useCallback(() => {
+    if (!selectedAgentId) {
+      return;
+    }
+    selectSession(`agent:${selectedAgentId}:${crypto.randomUUID()}`);
+  }, [selectSession, selectedAgentId]);
 
   return (
     <header className="chat-header">
-      <div className="chat-header__left">
-        <span className="status-pill">
-          <span className="status-dot connected" />
-          {agent?.name ?? "assistant"}
-        </span>
-        {session?.title ? <span className="muted">{session.title}</span> : null}
-      </div>
+      <div className="chat-header__inner">
+        <div className="chat-header__main">
+          <div className="chat-header__left">
+            <AgentPicker />
 
-      {selectedSessionId ? (
-        <div className="chat-header__right">
-          <button className="chat-btn-ghost" style={{ height: 32 }} onClick={() => resetSession(selectedSessionId)} title="Reset session">
-            <RotateCcw size={15} />
-          </button>
-          {!isMainSession ? (
-            confirmingDelete ? (
-              <>
-                <button className="chat-btn-danger" style={{ height: 32 }} onClick={() => deleteSession(selectedSessionId)} title="Confirm delete">
-                  <Check size={15} />
-                </button>
-                <button className="chat-btn-ghost" style={{ height: 32 }} onClick={() => setConfirmingDelete(false)} title="Cancel">
-                  <X size={15} />
-                </button>
-              </>
-            ) : (
-              <button className="chat-btn-danger" style={{ height: 32 }} onClick={() => setConfirmingDelete(true)} title="Delete session">
-                <Trash2 size={15} />
-              </button>
-            )
-          ) : null}
+            <label className="chat-session-select-wrap">
+              <select
+                className="chat-session-select"
+                aria-label="Conversation"
+                value={selectedSessionId ?? ""}
+                onChange={(event) => selectSession(event.target.value || null)}
+              >
+                {isDraftSession && selectedSessionId ? <option value={selectedSessionId}>New conversation</option> : null}
+                {!selectedSessionId ? <option value="">New conversation</option> : null}
+                {(sessions ?? []).map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {formatSessionLabel(candidate)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="chat-header__right">
+            <button
+              type="button"
+              className="chat-btn-ghost chat-header__new-chat"
+              onClick={handleNewChat}
+              disabled={!selectedAgentId}
+              title="Start a new chat"
+              aria-label="Start a new chat"
+            >
+              <MessageSquarePlus size={15} />
+            </button>
+          </div>
         </div>
-      ) : null}
+      </div>
     </header>
   );
 });

@@ -1,6 +1,6 @@
 // Hook: useAutoScroll — smart auto-scroll for message lists
 
-import { useRef, useCallback, useEffect } from "react";
+import { useRef, useCallback, useEffect, useState } from "react";
 
 interface UseAutoScrollOptions {
   /** Distance from bottom (px) to consider "at bottom" */
@@ -19,6 +19,7 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
   const { threshold = 100, deps = [] } = options;
   const containerRef = useRef<T>(null);
   const isAtBottomRef = useRef(true);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
   /** Check if scrolled to (near) bottom */
   const checkIsAtBottom = useCallback(() => {
@@ -41,10 +42,13 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
     if (!el) return;
 
     const handleScroll = () => {
-      isAtBottomRef.current = checkIsAtBottom();
+      const next = checkIsAtBottom();
+      isAtBottomRef.current = next;
+      setIsNearBottom(next);
     };
 
     el.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
     return () => el.removeEventListener("scroll", handleScroll);
   }, [checkIsAtBottom]);
 
@@ -60,5 +64,6 @@ export function useAutoScroll<T extends HTMLElement = HTMLDivElement>(
     containerRef,
     scrollToBottom,
     isAtBottom: checkIsAtBottom,
+    isNearBottom,
   };
 }

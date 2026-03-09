@@ -7,20 +7,30 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import type { GatewayEvent } from "./protocol";
+import type { ConnectParams, GatewayEvent } from "./protocol";
 import type { GatewayConfig } from "./types";
 import { loadDeviceIdentity, saveDeviceIdentity } from "./device-store";
 
 /** Protocol version */
 const PROTOCOL_VERSION = 3;
 
-/** Client identity — values must be in GATEWAY_CLIENT_IDS / GATEWAY_CLIENT_MODES whitelist */
-const CLIENT_INFO = {
-  id: "gateway-client",
+function resolveDesktopClientId(): "openclaw-macos" | "gateway-client" {
+  if (typeof navigator !== "undefined") {
+    const platform = ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? "").toLowerCase();
+    if (platform.includes("mac")) {
+      return "openclaw-macos";
+    }
+  }
+
+  return "gateway-client";
+}
+
+/** Desktop client identity — avoid browser Control UI origin enforcement. */
+export const GATEWAY_CLIENT_INFO = {
+  id: resolveDesktopClientId(),
   version: "0.1.0",
-  platform: "macos",
   mode: "ui",
-};
+} as const;
 
 /** Scopes requested for operator role */
 const DEFAULT_OPERATOR_SCOPES = [
@@ -65,6 +75,41 @@ function bytesToBase64url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function resolveClientPlatform(): string {
+  if (typeof navigator !== "undefined") {
+    const platform = (
+      navigator as Navigator & { userAgentData?: { platform?: string } }
+    ).userAgentData?.platform ?? navigator.platform;
+    if (typeof platform === "string" && platform.trim().length > 0) {
+      return platform.trim();
+    }
+  }
+
+  return "desktop";
+}
+
+function resolveClientLocale(): string | undefined {
+  if (typeof navigator !== "undefined" && typeof navigator.language === "string") {
+    const locale = navigator.language.trim();
+    if (locale) {
+      return locale;
+    }
+  }
+
+  return undefined;
+}
+
+function resolveClientUserAgent(): string | undefined {
+  if (typeof navigator !== "undefined" && typeof navigator.userAgent === "string") {
+    const userAgent = navigator.userAgent.trim();
+    if (userAgent) {
+      return userAgent;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Build device signature payload expected by Gateway.
  * Gateway supports v3 payloads and keeps v2 compatibility.
@@ -72,6 +117,8 @@ function bytesToBase64url(bytes: Uint8Array): string {
  */
 function buildSignaturePayload(
   deviceId: string,
+  clientId: string,
+  clientMode: string,
   scopes: string[],
   signedAt: number,
   token: string,
@@ -80,8 +127,8 @@ function buildSignaturePayload(
   return [
     "v2",
     deviceId,
-    CLIENT_INFO.id,
-    CLIENT_INFO.mode,
+    clientId,
+    clientMode,
     "operator",
     scopes.join(","),
     String(signedAt),
@@ -146,7 +193,12 @@ async function getOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
 export async function buildConnectParams(
   config: GatewayConfig,
   nonce: string,
-): Promise<Record<string, unknown>> {
+): Promise<ConnectParams> {
+  const trimmedNonce = nonce.trim();
+  if (!trimmedNonce) {
+    throw new Error("Gateway connect challenge missing nonce");
+  }
+
   const scopes = normalizeOperatorScopes(config.scopes);
   const device = await getOrCreateDeviceIdentity();
   const privateKeyBytes = hexToBytes(device.privateKey);
@@ -154,15 +206,27 @@ export async function buildConnectParams(
   const publicKey = bytesToBase64url(publicKeyBytes);
   const deviceId = bytesToHex(sha256(publicKeyBytes));
   const signedAt = Date.now();
+  const client = {
+    ...GATEWAY_CLIENT_INFO,
+    displayName: config.name.trim() || undefined,
+    platform: resolveClientPlatform(),
+  };
+  const locale = resolveClientLocale();
+  const userAgent = resolveClientUserAgent();
+  const sharedToken = config.token.trim();
+  const deviceToken = config.deviceToken?.trim() || undefined;
+  const authToken = sharedToken || deviceToken || "";
+  const auth = authToken || deviceToken ? { token: authToken || undefined, deviceToken } : undefined;
 
   // This gateway validates token in the signature payload.
-  const payloadToken = config.token;
   const payload = buildSignaturePayload(
     deviceId,
+    client.id,
+    client.mode,
     scopes,
     signedAt,
-    payloadToken,
-    nonce,
+    authToken,
+    trimmedNonce,
   );
   const signatureBytes = ed25519.sign(
     new TextEncoder().encode(payload),
@@ -177,19 +241,20 @@ export async function buildConnectParams(
   return {
     minProtocol: PROTOCOL_VERSION,
     maxProtocol: PROTOCOL_VERSION,
-    client: { ...CLIENT_INFO },
+    client,
+    caps: [],
     role: "operator",
     scopes,
-    auth: {
-      token: config.token,
-    },
+    auth,
     device: {
       id: deviceId,
       publicKey,
       signature: bytesToBase64url(signatureBytes),
       signedAt,
-      nonce,
+      nonce: trimmedNonce,
     },
+    locale,
+    userAgent,
   };
 }
 

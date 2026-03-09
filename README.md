@@ -1,7 +1,18 @@
-# Tauri + React + Typescript
+# OpenClaw macStudio WebUI
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+This branch now boots a React/Tauri desktop workspace as the primary shell, with:
 
-## Recommended IDE Setup
+- live Gateway connection management
+- usable chat sessions and agent/model selection
+- dedicated sessions workspace with preview + per-session overrides
+- agent inspection with tool catalog support
+- channel status + WhatsApp login actions
+- raw config editing/apply diagnostics
+- embedded upstream OpenClaw Control UI at `/control-ui`
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Development
+
+- `pnpm install`
+- `pnpm dev`
+- `pnpm build`
+- `pnpm tauri dev`

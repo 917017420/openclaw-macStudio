@@ -6,16 +6,26 @@ import type {
   AssistantMessage,
   ToolCallMessage,
   SystemMessage,
+  ChatAttachment,
+  MessageToolCard,
 } from "@/lib/gateway";
 import { uid } from "@/lib/utils";
 
 /** Create a user message */
-export function createUserMessage(content: string): UserMessage {
+export function createUserMessage(
+  content: string,
+  options: {
+    attachments?: ChatAttachment[];
+    raw?: unknown;
+  } = {},
+): UserMessage {
   return {
     role: "user",
     id: uid(),
     content,
     timestamp: Date.now(),
+    attachments: options.attachments,
+    raw: options.raw,
   };
 }
 
@@ -29,6 +39,8 @@ export function createAssistantMessage(
     content: "",
     timestamp: Date.now(),
     isStreaming: false,
+    attachments: undefined,
+    toolCards: undefined as MessageToolCard[] | undefined,
     ...overrides,
   };
 }
@@ -38,6 +50,7 @@ export function createToolCallMessage(
   toolName: string,
   toolCallId: string,
   input: unknown,
+  overrides: Partial<ToolCallMessage> = {},
 ): ToolCallMessage {
   return {
     role: "tool",
@@ -47,16 +60,18 @@ export function createToolCallMessage(
     input,
     status: "started",
     timestamp: Date.now(),
+    ...overrides,
   };
 }
 
 /** Create a system message */
-export function createSystemMessage(content: string): SystemMessage {
+export function createSystemMessage(content: string, raw?: unknown): SystemMessage {
   return {
     role: "system",
     id: uid(),
     content,
     timestamp: Date.now(),
+    raw,
   };
 }
 

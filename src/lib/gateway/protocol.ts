@@ -46,23 +46,29 @@ export interface ConnectParams {
   maxProtocol: number;
   client: {
     id: string;
+    displayName?: string;
     version: string;
     platform: string;
+    deviceFamily?: string;
     mode: string;
+    instanceId?: string;
   };
+  caps?: string[];
   role: "operator";
   scopes: string[];
-  auth: {
+  auth?: {
     token?: string;
     deviceToken?: string;
   };
   device?: {
-    id?: string;
+    id: string;
     nonce: string;
-    publicKey?: string;
-    signature?: string;
-    signedAt?: number;
+    publicKey: string;
+    signature: string;
+    signedAt: number;
   };
+  locale?: string;
+  userAgent?: string;
 }
 
 /** Connect success response (hello-ok) */

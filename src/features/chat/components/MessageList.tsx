@@ -1,108 +1,213 @@
-import { memo, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
+import { ChevronDown } from "lucide-react";
 import { useChatStore } from "@/features/chat/store";
 import { useAutoScroll } from "@/features/chat/hooks/useAutoScroll";
-import type { ChatMessage } from "@/lib/gateway";
-import { MessageBubble } from "./MessageBubble";
-import { StreamingIndicator } from "./StreamingIndicator";
+import { useAgents } from "@/features/chat/hooks/useAgents";
+import {
+  buildChatItems,
+  MessageGroupView,
+  ReadingIndicatorGroup,
+  StreamingGroup,
+  type MessageGroup,
+} from "@/features/chat/chat/grouped-render";
+import { MarkdownSidebar } from "./MarkdownSidebar";
 
-type Group = {
-  role: "user" | "assistant" | "tool" | "system";
-  items: ChatMessage[];
-};
+const EMPTY_MESSAGES: never[] = [];
 
-function groupMessages(messages: ChatMessage[]): Group[] {
-  const groups: Group[] = [];
-  for (const m of messages) {
-    const role = m.role;
-    const last = groups[groups.length - 1];
-    if (!last || last.role !== role || role === "system") {
-      groups.push({ role, items: [m] });
-      continue;
-    }
-    last.items.push(m);
-  }
-  return groups;
+function ChatDivider({ label }: { label: string }) {
+  return (
+    <div className="chat-divider" role="separator">
+      <span className="chat-divider__line" />
+      <span className="chat-divider__label">{label}</span>
+      <span className="chat-divider__line" />
+    </div>
+  );
 }
-
-function avatarForRole(role: Group["role"]): string {
-  if (role === "user") return "U";
-  if (role === "assistant") return "A";
-  if (role === "tool") return "⚙";
-  return "S";
-}
-
-const EMPTY_MESSAGES: ChatMessage[] = [];
 
 export const MessageList = memo(function MessageList() {
   const selectedSessionId = useChatStore((s) => s.selectedSessionId);
+  const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const messagesRaw = useChatStore((s) =>
     selectedSessionId ? s.messagesBySession[selectedSessionId] : undefined,
   );
-  const messages = messagesRaw ?? EMPTY_MESSAGES;
+  const toolMessages = useChatStore((s) =>
+    selectedSessionId ? s.toolMessagesBySession[selectedSessionId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES,
+  );
+  const sidebarOpen = useChatStore((s) => s.sidebarOpen);
+  const sidebarContent = useChatStore((s) => s.sidebarContent);
+  const sidebarRawContent = useChatStore((s) => s.sidebarRawContent);
+  const sidebarError = useChatStore((s) => s.sidebarError);
+  const splitRatio = useChatStore((s) => s.splitRatio);
+  const closeSidebar = useChatStore((s) => s.closeSidebar);
+  const openSidebar = useChatStore((s) => s.openSidebar);
+  const setSplitRatio = useChatStore((s) => s.setSplitRatio);
   const isStreaming = useChatStore((s) => s.isStreaming);
-  const streamingMessageId = useChatStore((s) => s.streamingMessageId);
+  const streamingSessionKey = useChatStore((s) => s.streamingSessionKey);
+  const messages = messagesRaw ?? EMPTY_MESSAGES;
+  const { data: agents } = useAgents();
 
-  const grouped = useMemo(() => groupMessages(messages), [messages]);
-  const lastMessageId = messages[messages.length - 1]?.id;
+  const agent = agents?.find((candidate) => candidate.id === selectedAgentId);
+  const assistantName = agent?.name ?? "Assistant";
+  const assistantAvatar = agent?.avatar ?? null;
 
-  const { containerRef } = useAutoScroll<HTMLDivElement>({
-    deps: [messages.length, isStreaming, lastMessageId],
+  const streamingMessage = useMemo(() => {
+    if (!isStreaming || selectedSessionId !== streamingSessionKey) {
+      return null;
+    }
+    return [...messages].reverse().find(
+      (message): message is Extract<(typeof messages)[number], { role: "assistant" }> =>
+        message.role === "assistant" && Boolean(message.isStreaming),
+    ) ?? null;
+  }, [isStreaming, messages, selectedSessionId, streamingSessionKey]);
+
+  const historyMessages = useMemo(
+    () => (streamingMessage ? messages.filter((message) => message.id !== streamingMessage.id) : messages),
+    [messages, streamingMessage],
+  );
+
+  const chatItems = useMemo(
+    () =>
+      buildChatItems({
+        messages: historyMessages,
+        toolMessages,
+        streamingText:
+          streamingMessage && selectedSessionId === streamingSessionKey
+            ? (streamingMessage.content ?? "")
+            : null,
+        streamStartedAt: streamingMessage?.timestamp ?? null,
+      }),
+    [historyMessages, selectedSessionId, streamingMessage, streamingSessionKey, toolMessages],
+  );
+
+  const lastKey = chatItems[chatItems.length - 1]?.key ?? null;
+  const { containerRef, scrollToBottom, isNearBottom } = useAutoScroll<HTMLDivElement>({
+    deps: [lastKey, isStreaming, streamingMessage?.content],
   });
 
-  const isPolling = isStreaming && streamingMessageId === "__polling__";
+  const showNewMessages = !isNearBottom && chatItems.length > 0;
 
-  if (messages.length === 0) {
+  const handleDividerDrag = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!sidebarOpen) return;
+      const parent = event.currentTarget.parentElement;
+      if (!parent) return;
+      const rect = parent.getBoundingClientRect();
+      const onMove = (moveEvent: MouseEvent) => {
+        const ratio = (moveEvent.clientX - rect.left) / rect.width;
+        setSplitRatio(ratio);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [setSplitRatio, sidebarOpen],
+  );
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      closeSidebar();
+    }
+  }, [closeSidebar, selectedSessionId]);
+
+  if (messages.length === 0 && !streamingMessage && toolMessages.length === 0) {
     return (
-      <div ref={containerRef} className="chat-thread">
-        <div className="chat-system-chip">Start a conversation</div>
+      <div className={`chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}`}>
+        <div className="chat-main" style={{ flex: sidebarOpen ? `0 0 ${splitRatio * 100}%` : undefined }}>
+          <div ref={containerRef} className="chat-thread">
+            <div className="chat-thread__body">
+              <div className="chat-empty-state">
+                <div className="chat-empty-state__title">Start a conversation</div>
+                <div className="chat-empty-state__hint">
+                  Ask something, paste images, or switch to another conversation.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {sidebarOpen ? (
+          <>
+            <div className="chat-resize-handle" onMouseDown={handleDividerDrag} />
+            <div className="chat-sidebar">
+              <MarkdownSidebar
+                content={sidebarContent}
+                rawContent={sidebarRawContent}
+                error={sidebarError}
+                onClose={closeSidebar}
+              />
+            </div>
+          </>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="chat-thread">
-      {grouped.map((group, groupIndex) => {
-        if (group.role === "system") {
-          return (
-            <div key={`sys-${groupIndex}`} style={{ display: "grid", gap: 8 }}>
-              {group.items.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
-              ))}
-            </div>
-          );
-        }
-
-        const ts = group.items[group.items.length - 1]?.timestamp ?? Date.now();
-        const time = new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-        return (
-          <div key={`${group.role}-${groupIndex}`} className={`chat-group ${group.role === "user" ? "user" : ""}`}>
-            <div className={`chat-avatar ${group.role === "user" ? "user" : group.role === "assistant" ? "assistant" : "other"}`}>
-              {avatarForRole(group.role)}
-            </div>
-            <div className="chat-group-messages">
-              {group.items.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
-              ))}
-              <div className="chat-group-footer">
-                <span>{group.role === "user" ? "You" : group.role === "assistant" ? "Assistant" : "Tool"}</span>
-                <span>{time}</span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      {isPolling ? (
-        <div className="chat-group">
-          <div className="chat-avatar assistant">A</div>
-          <div className="chat-group-messages">
-            <div className="chat-bubble">
-              <StreamingIndicator />
+    <>
+      <div className={`chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}`}>
+        <div className="chat-main" style={{ flex: sidebarOpen ? `0 0 ${splitRatio * 100}%` : undefined }}>
+          <div ref={containerRef} className="chat-thread" role="log" aria-live="polite">
+            <div className="chat-thread__body">
+              {chatItems.map((item) => {
+                if (item.kind === "divider") {
+                  return <ChatDivider key={item.key} label={item.label} />;
+                }
+                if (item.kind === "reading-indicator") {
+                  return <ReadingIndicatorGroup key={item.key} assistantName={assistantName} assistantAvatar={assistantAvatar} />;
+                }
+                if (item.kind === "stream") {
+                  return (
+                    <StreamingGroup
+                      key={item.key}
+                      text={item.text}
+                      startedAt={item.startedAt}
+                      assistantName={assistantName}
+                      assistantAvatar={assistantAvatar}
+                      onOpenSidebar={openSidebar}
+                    />
+                  );
+                }
+                if (item.kind === "group") {
+                  return (
+                    <MessageGroupView
+                      key={item.key}
+                      group={item as MessageGroup}
+                      assistantName={assistantName}
+                      assistantAvatar={assistantAvatar}
+                      onOpenSidebar={openSidebar}
+                      showReasoning={true}
+                    />
+                  );
+                }
+                return null;
+              })}
             </div>
           </div>
         </div>
+
+        {sidebarOpen ? (
+          <>
+            <div className="chat-resize-handle" onMouseDown={handleDividerDrag} />
+            <div className="chat-sidebar">
+              <MarkdownSidebar
+                content={sidebarContent}
+                rawContent={sidebarRawContent}
+                error={sidebarError}
+                onClose={closeSidebar}
+              />
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      {showNewMessages ? (
+        <button type="button" className="chat-new-messages" onClick={() => scrollToBottom("smooth")}>
+          New messages
+          <ChevronDown size={14} />
+        </button>
       ) : null}
-    </div>
+    </>
   );
 });

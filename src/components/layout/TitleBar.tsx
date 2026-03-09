@@ -33,17 +33,18 @@ export function TitleBar() {
     <header data-tauri-drag-region className="topbar no-select">
       <div data-tauri-drag-region className="topbar-left">
         <div className="brand" data-tauri-drag-region>
+          <span className="brand-mark" aria-hidden="true" />
           <span className="brand-title" data-tauri-drag-region>
             OpenClaw
           </span>
         </div>
-        <span className="status-pill">
+        <span className="topbar-status-pill">
           <span className={dotClass} />
           <span>{statusText(state)}</span>
         </span>
       </div>
 
-      <div data-tauri-drag-region className="h-full flex-1" />
+      <div data-tauri-drag-region className="topbar-spacer" />
 
       <div className="window-controls no-drag">
         <button className="window-btn" onClick={() => appWindow.minimize()} title="最小化">

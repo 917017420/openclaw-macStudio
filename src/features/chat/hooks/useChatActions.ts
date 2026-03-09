@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { gateway } from "@/lib/gateway";
+import type { ChatAttachment } from "@/lib/gateway";
 import { useChatStore } from "@/features/chat/store";
-import { createUserMessage } from "@/features/chat/utils";
+import {
+  createAssistantMessage,
+  createSystemMessage,
+  createUserMessage,
+} from "@/features/chat/utils";
 import { uid } from "@/lib/utils";
 import { messagesQueryKey } from "./useSessionMessages";
 import { sessionsQueryKey } from "./useSessions";
@@ -90,6 +95,15 @@ async function fetchLatestMessages(sessionKey: string): Promise<ReturnType<typeo
   } catch {
     return [];
   }
+}
+
+function dataUrlToAttachmentPayload(dataUrl: string): { mimeType: string; content: string } | null {
+  const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+  const [, mimeType, content] = match;
+  return { mimeType, content };
 }
 
 export function useChatActions() {
@@ -275,39 +289,89 @@ export function useChatActions() {
   }
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, attachments: ChatAttachment[] = []) => {
       const {
         selectedAgentId,
         selectedSessionId,
         selectedModelId,
         addMessage,
+        clearToolMessages,
+        closeSidebar,
         markSessionSent,
         setDraft,
+        setAttachments,
+        setCompactionStatus,
+        setFallbackStatus,
         selectSession,
+        startStreaming,
       } = useChatStore.getState();
 
       if (!selectedAgentId) return;
       const trimmed = content.trim();
-      if (!trimmed) return;
+      if (!trimmed && attachments.length === 0) return;
 
       const sessionKey = selectedSessionId ?? `agent:${selectedAgentId}:main`;
       if (!selectedSessionId) {
         selectSession(sessionKey);
       }
 
-      const userMessage = createUserMessage(trimmed);
+      const userContentBlocks: Array<Record<string, unknown>> = [];
+      if (trimmed) {
+        userContentBlocks.push({ type: "text", text: trimmed });
+      }
+      for (const attachment of attachments) {
+        userContentBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: attachment.mimeType,
+            data: attachment.dataUrl,
+          },
+        });
+      }
+
+      const userMessage = createUserMessage(trimmed, {
+        attachments,
+        raw: {
+          role: "user",
+          content: userContentBlocks,
+          timestamp: Date.now(),
+        },
+      });
       markSessionSent(sessionKey, userMessage.timestamp);
       addMessage(sessionKey, userMessage);
       setDraft(sessionKey, "");
+      setAttachments(sessionKey, []);
+      clearToolMessages(sessionKey);
+      setCompactionStatus(sessionKey, null);
+      setFallbackStatus(sessionKey, null);
+      closeSidebar();
 
-      const knownCount =
-        useChatStore.getState().messagesBySession[sessionKey]?.length ?? 0;
+      const runId = uid();
+      const pendingAssistant = createAssistantMessage({
+        id: `stream:${runId}`,
+        timestamp: userMessage.timestamp + 1,
+        isStreaming: true,
+      });
+      addMessage(sessionKey, pendingAssistant);
+      startStreaming(sessionKey, pendingAssistant.id, runId);
 
       const params: Record<string, unknown> = {
         sessionKey,
         message: trimmed,
-        idempotencyKey: uid(),
+        idempotencyKey: runId,
       };
+      const apiAttachments = attachments
+        .map((attachment) => dataUrlToAttachmentPayload(attachment.dataUrl))
+        .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null)
+        .map((attachment) => ({
+          type: "image",
+          mimeType: attachment.mimeType,
+          content: attachment.content,
+        }));
+      if (apiAttachments.length > 0) {
+        params.attachments = apiAttachments;
+      }
 
       try {
         if (selectedModelId) {
@@ -350,6 +414,9 @@ export function useChatActions() {
           }
           state.setMessages(effectiveSessionKey, merged);
           state.clearSession(sessionKey);
+          if (state.streamingSessionKey === sessionKey) {
+            useChatStore.setState({ streamingSessionKey: effectiveSessionKey });
+          }
         }
 
         state.selectSession(effectiveSessionKey);
@@ -358,12 +425,22 @@ export function useChatActions() {
         });
 
         const currentState = useChatStore.getState();
-        const count =
-          currentState.messagesBySession[effectiveSessionKey]?.length ?? knownCount;
+        const effectiveMessages = currentState.messagesBySession[effectiveSessionKey] ?? [];
+        const count = effectiveMessages.some((message) => message.id === pendingAssistant.id)
+          ? Math.max(0, effectiveMessages.length - 1)
+          : effectiveMessages.length;
         // Start polling immediately to reduce final-message display latency.
         pollForResponse(effectiveSessionKey, count);
       } catch (error) {
         console.error("[useChatActions] sendMessage failed:", error);
+        const state = useChatStore.getState();
+        if (state.streamingRunId === runId) {
+          state.stopStreaming();
+        }
+        state.addMessage(
+          sessionKey,
+          createSystemMessage(`Send failed: ${error instanceof Error ? error.message : String(error)}`),
+        );
       }
     },
     [pollForResponse, queryClient],
@@ -461,9 +538,22 @@ export function useChatActions() {
     [queryClient],
   );
 
+  const refreshSession = useCallback(async () => {
+    const state = useChatStore.getState();
+    const sessionKey = state.selectedSessionId;
+    if (!sessionKey) {
+      return;
+    }
+    const rpcSessionKey = normalizeSessionKeyForRpc(sessionKey, state.selectedAgentId);
+    queryClient.invalidateQueries({ queryKey: messagesQueryKey(rpcSessionKey) });
+    queryClient.invalidateQueries({ queryKey: sessionsQueryKey(state.selectedAgentId ?? undefined) });
+    await queryClient.refetchQueries({ queryKey: messagesQueryKey(rpcSessionKey) });
+  }, [queryClient]);
+
   return {
     sendMessage,
     abortStreaming,
+    refreshSession,
     resetSession,
     deleteSession,
   };

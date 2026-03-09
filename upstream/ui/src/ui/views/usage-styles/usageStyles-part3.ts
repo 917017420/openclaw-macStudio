@@ -41,28 +41,54 @@ export const usageStylesPart3 = `
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    gap: 12px;
+    margin-bottom: 10px;
   }
   .sessions-card-title {
     font-weight: 600;
     font-size: 14px;
   }
   .sessions-card-count {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--muted);
+    white-space: nowrap;
   }
   .sessions-card-meta {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin: 8px 0 10px;
+    flex-wrap: wrap;
+    margin: 6px 0 12px;
     font-size: 12px;
     color: var(--muted);
   }
   .sessions-card-stats {
     display: inline-flex;
-    gap: 12px;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sessions-card-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    line-height: 1;
+  }
+  .sessions-card-stat-label {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+  }
+  .sessions-card-stat-value {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
   .sessions-sort {
     display: inline-flex;
@@ -71,20 +97,30 @@ export const usageStylesPart3 = `
     font-size: 12px;
     color: var(--muted);
   }
+  .sessions-sort > span {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
   .sessions-sort select {
-    padding: 4px 8px;
-    border-radius: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
     border: 1px solid var(--border);
-    background: var(--bg);
+    background: var(--bg-secondary);
     color: var(--text);
     font-size: 12px;
   }
   .sessions-action-btn {
     height: 28px;
-    padding: 0 10px;
+    padding: 0 11px;
     border-radius: 8px;
     font-size: 12px;
     line-height: 1;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+  }
+  .sessions-action-btn:hover {
+    transform: translateY(-1px);
   }
   .sessions-action-btn.icon {
     width: 32px;
@@ -101,25 +137,37 @@ export const usageStylesPart3 = `
   .sessions-card .session-bars {
     max-height: 280px;
     background: var(--bg);
-    border-radius: 6px;
+    border-radius: 10px;
     border: 1px solid var(--border);
     margin: 0;
     overflow-y: auto;
-    padding: 8px;
+    padding: 6px;
+  }
+  .sessions-card .session-bars.session-bars-compact {
+    max-height: 220px;
+    margin-top: 6px;
+  }
+  .sessions-card .session-bars.session-bars-selected {
+    max-height: 160px;
+    margin-top: 6px;
   }
   .sessions-card .session-bar-row {
-    padding: 6px 8px;
-    border-radius: 6px;
-    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    margin-bottom: 4px;
     border: 1px solid transparent;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s;
   }
   .sessions-card .session-bar-row:hover {
-    border-color: var(--border);
+    border-color: var(--border-strong);
     background: var(--bg-hover);
+    transform: translateY(-1px);
   }
   .sessions-card .session-bar-row.selected {
-    border-color: var(--accent);
+    border-color: rgba(255, 77, 77, 0.35);
     background: var(--accent-subtle);
     box-shadow: inset 0 0 0 1px rgba(255, 77, 77, 0.15);
   }
@@ -128,10 +176,46 @@ export const usageStylesPart3 = `
     min-width: 140px;
     font-size: 12px;
   }
-  .sessions-card .session-bar-value {
-    flex: 0 0 60px;
-    font-size: 11px;
+  .sessions-card .session-bar-title {
+    font-size: 12px;
     font-weight: 600;
+    line-height: 1.35;
+  }
+  .sessions-card .session-bar-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    margin-top: 4px;
+    white-space: normal;
+    overflow: visible;
+  }
+  .sessions-card .session-bar-meta-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    min-width: 0;
+  }
+  .sessions-card .session-bar-meta-label {
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .sessions-card .session-bar-meta-value {
+    color: var(--text);
+    font-size: 10px;
+    opacity: 0.78;
+    overflow-wrap: anywhere;
+  }
+  .sessions-card .session-bar-value {
+    flex: 0 0 auto;
+    min-width: 68px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--text);
   }
   .sessions-card .session-bar-track {
     flex: 0 0 70px;
@@ -141,8 +225,40 @@ export const usageStylesPart3 = `
   .sessions-card .session-bar-fill {
     background: rgba(255, 77, 77, 0.55);
   }
+  .sessions-card .session-copy-btn {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 10px;
+    background: var(--bg);
+    color: var(--muted);
+    opacity: 0.72;
+  }
+  .sessions-card .session-bar-row:not(:hover):not(.selected) .session-copy-btn {
+    opacity: 0.42;
+  }
+  .sessions-card .session-copy-btn:hover {
+    color: var(--text);
+    opacity: 1;
+  }
   .sessions-clear-btn {
     margin-left: auto;
+  }
+  .sessions-empty-state,
+  .session-bars-more {
+    padding: 12px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .sessions-selection-panel {
+    margin-top: 10px;
+  }
+  .sessions-selection-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   
   /* ===== EMPTY DETAIL STATE ===== */
@@ -193,7 +309,8 @@ export const usageStylesPart3 = `
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 12px;
+    gap: 12px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
   }
@@ -205,41 +322,92 @@ export const usageStylesPart3 = `
     font-size: 14px;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
+    min-width: 0;
+  }
+  .session-detail-title-text {
+    overflow-wrap: anywhere;
+  }
+  .session-detail-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 77, 77, 0.2);
+    background: rgba(255, 77, 77, 0.08);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
   }
   .session-detail-header-left {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
   }
   .session-close-btn {
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
     cursor: pointer;
-    padding: 2px 8px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     font-size: 16px;
     line-height: 1;
-    border-radius: 4px;
-    transition: background 0.15s, color 0.15s;
+    border-radius: 8px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
   }
   .session-close-btn:hover {
     background: var(--bg-hover);
     color: var(--text);
     border-color: var(--accent);
+    transform: translateY(-1px);
   }
   .session-detail-stats {
     display: flex;
-    gap: 10px;
+    align-items: center;
+    gap: 8px;
     font-size: 12px;
     color: var(--muted);
+    flex-wrap: wrap;
   }
   .session-detail-stats strong {
     color: var(--text);
     font-family: var(--font-mono);
   }
+  .session-detail-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    line-height: 1;
+  }
+  .session-detail-stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
   .session-detail-content {
     padding: 12px;
+  }
+  .session-detail-content .usage-badges {
+    gap: 5px;
+    margin-bottom: 10px;
+  }
+  .session-detail-content .usage-badge {
+    gap: 5px;
+    padding: 2px 7px;
+    font-size: 10px;
+    color: var(--muted);
+    background: var(--bg-secondary);
   }
   .session-summary-grid {
     display: grid;
@@ -249,23 +417,27 @@ export const usageStylesPart3 = `
   }
   .session-summary-card {
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px;
+    border-radius: 10px;
+    padding: 10px;
     background: var(--bg-secondary);
   }
   .session-summary-title {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--muted);
-    margin-bottom: 4px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   .session-summary-value {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
+    line-height: 1.2;
   }
   .session-summary-meta {
     font-size: 11px;
     color: var(--muted);
     margin-top: 4px;
+    line-height: 1.45;
   }
   .session-detail-row {
     display: grid;
@@ -423,13 +595,57 @@ export const usageStylesPart3 = `
     padding: 10px 12px;
     font-size: 12px;
   }
+  .session-logs-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .session-log-count {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .session-log-filters {
+    margin: 10px 12px;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .session-log-filter-select {
+    min-width: 140px;
+    background: var(--bg-secondary);
+  }
+  .session-log-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .session-log-search {
+    min-width: 200px;
+    background: var(--bg-secondary);
+  }
   .session-logs-compact .session-logs-list {
     max-height: none;
     flex: 1 1 auto;
     overflow: auto;
   }
   .session-logs-compact .session-log-entry {
-    padding: 8px 12px;
+    padding: 10px 12px;
   }
   .session-logs-compact .session-log-content {
     font-size: 12px;
@@ -464,10 +680,16 @@ export const usageStylesPart3 = `
   .session-log-tools-pill {
     border: 1px solid var(--border);
     border-radius: 999px;
-    padding: 2px 8px;
+    padding: 2px 7px;
     font-size: 10px;
     background: var(--bg);
-    color: var(--text);
+    color: var(--muted);
+    line-height: 1.2;
+  }
+  .session-logs-empty {
+    padding: 14px 12px;
+    color: var(--muted);
+    font-size: 11px;
   }
 
   /* ===== RESPONSIVE ===== */
@@ -480,8 +702,15 @@ export const usageStylesPart3 = `
     }
   }
   @media (max-width: 600px) {
+    .session-detail-header {
+      align-items: flex-start;
+    }
     .session-bar-label {
       flex: 0 0 100px;
+    }
+    .session-log-filter-select,
+    .session-log-search {
+      min-width: 100%;
     }
     .cost-breakdown-legend {
       gap: 10px;

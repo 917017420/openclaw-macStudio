@@ -5,8 +5,13 @@ import type {
   ChatMessage,
   AssistantMessage,
   ToolCallMessage,
+  ChatAttachment,
 } from "@/lib/gateway";
 import { sanitizeVisibleText } from "@/features/chat/utils/message-pipeline";
+import type {
+  CompactionStatus,
+  FallbackStatus,
+} from "@/features/chat/chat/tool-stream";
 
 function coerceText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -44,18 +49,61 @@ function normalizeComparableText(text: string): string {
   return sanitizeDisplayText(text).replace(/\s+/g, " ").trim();
 }
 
+function toolComparableKey(tool: ToolCallMessage): string | null {
+  const toolCallId = tool.toolCallId?.trim();
+  if (toolCallId) {
+    return `tool|${toolCallId}`;
+  }
+
+  const name = tool.toolName?.trim();
+  const inputKey = normalizeComparableText(coerceText(tool.input)).slice(0, 160);
+  if (!name && !inputKey) {
+    return null;
+  }
+  return `tool|${name ?? "tool"}|${inputKey}`;
+}
+
+function toolStatusRank(status: ToolCallMessage["status"]): number {
+  if (status === "error") return 3;
+  if (status === "completed") return 2;
+  return 1;
+}
+
+function preferToolMessage(
+  prev: ToolCallMessage,
+  next: ToolCallMessage,
+): ToolCallMessage {
+  const prevRank = toolStatusRank(prev.status);
+  const nextRank = toolStatusRank(next.status);
+  const prevHasTerminalData = prev.output !== undefined || Boolean(prev.error?.trim());
+  const nextHasTerminalData = next.output !== undefined || Boolean(next.error?.trim());
+
+  let preferred = prev;
+  if (nextRank !== prevRank) {
+    preferred = nextRank > prevRank ? next : prev;
+  } else if (nextHasTerminalData !== prevHasTerminalData) {
+    preferred = nextHasTerminalData ? next : prev;
+  } else if (next.timestamp >= prev.timestamp) {
+    preferred = next;
+  }
+
+  const fallback = preferred === prev ? next : prev;
+  return {
+    ...preferred,
+    input: preferred.input ?? fallback.input,
+    output: preferred.output ?? fallback.output,
+    error: preferred.error ?? fallback.error,
+    timestamp: Math.max(prev.timestamp, next.timestamp),
+  };
+}
+
 function messageComparableKey(message: ChatMessage): string | null {
   if (message.role === "user" || message.role === "assistant" || message.role === "system") {
     const normalized = normalizeComparableText(message.content);
     return normalized ? `${message.role}|${normalized}` : null;
   }
   if (message.role === "tool") {
-    const tool = message as ToolCallMessage;
-    if (tool.toolCallId && tool.toolCallId.trim().length > 0) {
-      return `tool|${tool.toolCallId}|${tool.status}`;
-    }
-    const inputKey = normalizeComparableText(coerceText(tool.input)).slice(0, 160);
-    return `tool|${tool.toolName}|${tool.status}|${inputKey}`;
+    return toolComparableKey(message as ToolCallMessage);
   }
   return null;
 }
@@ -102,6 +150,8 @@ function normalizeMessagesForStore(messages: ChatMessage[]): ChatMessage[] {
     const existing = dedupedById[existingIndex];
     if (msg.role === "assistant" && existing.role === "assistant") {
       dedupedById[existingIndex] = preferAssistantMessage(existing, msg);
+    } else if (msg.role === "tool" && existing.role === "tool") {
+      dedupedById[existingIndex] = preferToolMessage(existing, msg);
     } else if (msg.timestamp >= existing.timestamp) {
       dedupedById[existingIndex] = msg;
     }
@@ -120,6 +170,8 @@ function normalizeMessagesForStore(messages: ChatMessage[]): ChatMessage[] {
     if (lastKey && curKey && lastKey === curKey) {
       if (msg.role === "assistant" && last.role === "assistant") {
         compacted[compacted.length - 1] = preferAssistantMessage(last, msg);
+      } else if (msg.role === "tool" && last.role === "tool") {
+        compacted[compacted.length - 1] = preferToolMessage(last, msg);
       } else if (msg.timestamp >= last.timestamp) {
         compacted[compacted.length - 1] = msg;
       }
@@ -208,6 +260,8 @@ function normalizeMessagesForStore(messages: ChatMessage[]): ChatMessage[] {
     // For assistant, upgrade in-place when later content is clearly better.
     if (msg.role === "assistant" && existing.role === "assistant") {
       dedupedCrossGap[seenIndex] = preferAssistantMessage(existing, msg);
+    } else if (msg.role === "tool" && existing.role === "tool") {
+      dedupedCrossGap[seenIndex] = preferToolMessage(existing, msg);
     }
   }
 
@@ -276,9 +330,19 @@ export interface ChatState {
   selectedAgentId: string | null;
   selectedSessionId: string | null;
   selectedModelId: string | null;
+  focusMode: boolean;
+  sidebarOpen: boolean;
+  sidebarContent: string | null;
+  sidebarRawContent: string | null;
+  sidebarError: string | null;
+  splitRatio: number;
 
   // Messages keyed by session key
   messagesBySession: Record<string, ChatMessage[]>;
+  toolMessagesBySession: Record<string, unknown[]>;
+  attachmentsBySession: Record<string, ChatAttachment[]>;
+  compactionStatusBySession: Record<string, CompactionStatus | null>;
+  fallbackStatusBySession: Record<string, FallbackStatus | null>;
 
   // Streaming state
   isStreaming: boolean;
@@ -297,11 +361,20 @@ export interface ChatState {
   selectAgent: (agentId: string | null) => void;
   selectSession: (sessionId: string | null) => void;
   setSelectedModel: (modelId: string | null) => void;
+  setFocusMode: (value: boolean) => void;
+  toggleFocusMode: () => void;
+  openSidebar: (content: string, error?: string | null, rawContent?: string | null) => void;
+  closeSidebar: () => void;
+  setSplitRatio: (ratio: number) => void;
 
   // Actions: Messages
   setMessages: (sessionKey: string, messages: ChatMessage[]) => void;
   addMessage: (sessionKey: string, message: ChatMessage) => void;
   clearSession: (sessionKey: string) => void;
+  setToolMessages: (sessionKey: string, messages: unknown[]) => void;
+  clearToolMessages: (sessionKey: string) => void;
+  setCompactionStatus: (sessionKey: string, status: CompactionStatus | null) => void;
+  setFallbackStatus: (sessionKey: string, status: FallbackStatus | null) => void;
 
   // Actions: Streaming
   startStreaming: (sessionKey: string, messageId: string, runId?: string | null) => void;
@@ -337,6 +410,7 @@ export interface ChatState {
 
   // Actions: Drafts
   setDraft: (sessionKey: string, draft: string) => void;
+  setAttachments: (sessionKey: string, attachments: ChatAttachment[]) => void;
   markSessionSent: (sessionKey: string, ts: number) => void;
 }
 
@@ -345,7 +419,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectedAgentId: null,
   selectedSessionId: null,
   selectedModelId: null,
+  focusMode: false,
+  sidebarOpen: false,
+  sidebarContent: null,
+  sidebarRawContent: null,
+  sidebarError: null,
+  splitRatio: 0.62,
   messagesBySession: {},
+  toolMessagesBySession: {},
+  attachmentsBySession: {},
+  compactionStatusBySession: {},
+  fallbackStatusBySession: {},
   isStreaming: false,
   streamingMessageId: null,
   streamingSessionKey: null,
@@ -361,11 +445,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectSession: (sessionId) => {
-    set({ selectedSessionId: sessionId });
+    set((state) =>
+      state.selectedSessionId === sessionId
+        ? state
+        : { selectedSessionId: sessionId },
+    );
   },
 
   setSelectedModel: (modelId) => {
-    set({ selectedModelId: modelId });
+    set((state) =>
+      state.selectedModelId === modelId
+        ? state
+        : { selectedModelId: modelId },
+    );
+  },
+
+  setFocusMode: (value) => {
+    set((state) => (state.focusMode === value ? state : { focusMode: value }));
+  },
+
+  toggleFocusMode: () => {
+    set((state) => ({ focusMode: !state.focusMode }));
+  },
+
+  openSidebar: (content, error = null, rawContent = null) => {
+    set((state) => {
+      const nextError = error ?? null;
+      if (
+        state.sidebarOpen &&
+        state.sidebarContent === content &&
+        state.sidebarRawContent === rawContent &&
+        state.sidebarError === nextError
+      ) {
+        return state;
+      }
+      return {
+        sidebarOpen: true,
+        sidebarContent: content,
+        sidebarRawContent: rawContent,
+        sidebarError: nextError,
+      };
+    });
+  },
+
+  closeSidebar: () => {
+    set((state) =>
+      !state.sidebarOpen &&
+      state.sidebarContent === null &&
+      state.sidebarRawContent === null &&
+      state.sidebarError === null
+        ? state
+        : { sidebarOpen: false, sidebarContent: null, sidebarRawContent: null, sidebarError: null },
+    );
+  },
+
+  setSplitRatio: (ratio) => {
+    const clamped = Math.min(0.82, Math.max(0.35, ratio));
+    set((state) => (state.splitRatio === clamped ? state : { splitRatio: clamped }));
   },
 
   // --- Messages ---
@@ -399,9 +535,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearSession: (sessionKey) => {
     set((s) => {
-      const { [sessionKey]: _, ...rest } = s.messagesBySession;
-      return { messagesBySession: rest };
+      const rest = { ...s.messagesBySession };
+      const toolRest = { ...s.toolMessagesBySession };
+      const draftRest = { ...s.draftBySession };
+      const attachmentRest = { ...s.attachmentsBySession };
+      const compactionRest = { ...s.compactionStatusBySession };
+      const fallbackRest = { ...s.fallbackStatusBySession };
+      delete rest[sessionKey];
+      delete toolRest[sessionKey];
+      delete draftRest[sessionKey];
+      delete attachmentRest[sessionKey];
+      delete compactionRest[sessionKey];
+      delete fallbackRest[sessionKey];
+      return {
+        messagesBySession: rest,
+        toolMessagesBySession: toolRest,
+        draftBySession: draftRest,
+        attachmentsBySession: attachmentRest,
+        compactionStatusBySession: compactionRest,
+        fallbackStatusBySession: fallbackRest,
+      };
     });
+  },
+
+  setToolMessages: (sessionKey, messages) => {
+    set((s) => ({
+      toolMessagesBySession: {
+        ...s.toolMessagesBySession,
+        [sessionKey]: messages,
+      },
+    }));
+  },
+
+  clearToolMessages: (sessionKey) => {
+    set((s) => ({
+      toolMessagesBySession: {
+        ...s.toolMessagesBySession,
+        [sessionKey]: [],
+      },
+    }));
+  },
+
+  setCompactionStatus: (sessionKey, status) => {
+    set((s) => ({
+      compactionStatusBySession: {
+        ...s.compactionStatusBySession,
+        [sessionKey]: status,
+      },
+    }));
+  },
+
+  setFallbackStatus: (sessionKey, status) => {
+    set((s) => ({
+      fallbackStatusBySession: {
+        ...s.fallbackStatusBySession,
+        [sessionKey]: status,
+      },
+    }));
   },
 
   // --- Streaming ---
@@ -550,6 +740,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setDraft: (sessionKey, draft) => {
     set((s) => ({
       draftBySession: { ...s.draftBySession, [sessionKey]: draft },
+    }));
+  },
+
+  setAttachments: (sessionKey, attachments) => {
+    set((s) => ({
+      attachmentsBySession: { ...s.attachmentsBySession, [sessionKey]: attachments },
     }));
   },
 

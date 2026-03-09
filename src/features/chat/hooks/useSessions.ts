@@ -53,6 +53,21 @@ function buildSuccessorKey(key: string, agentId: string, sessionId: string): str
   return sessionId;
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function asTimestamp(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 /**
  * Normalize a raw session object from the server into our ChatSession type.
  */
@@ -64,8 +79,15 @@ function normalizeSession(raw: Record<string, unknown>): SessionRecord | null {
   if (!id) return null;
 
   const agentId = explicitAgentId || parseAgentIdFromKey(id) || "";
-  const title = (raw.title ?? raw.name ?? raw.label) as string | undefined;
   const now = Date.now();
+  const title = firstString(
+    raw.title,
+    raw.name,
+    raw.label,
+    raw.derivedTitle,
+    raw.displayName,
+    raw.subject,
+  );
   const sessionIdRaw = (raw.sessionId ?? raw.session_id) as string | undefined;
   const successorKey = sessionIdRaw
     ? buildSuccessorKey(id, agentId, sessionIdRaw)
@@ -82,8 +104,8 @@ function normalizeSession(raw: Record<string, unknown>): SessionRecord | null {
       id,
       agentId,
       title,
-      createdAt: (raw.createdAt ?? raw.created_at ?? raw.created ?? now) as number,
-      updatedAt: (raw.updatedAt ?? raw.updated_at ?? raw.updated ?? now) as number,
+      createdAt: asTimestamp(raw.createdAt ?? raw.created_at ?? raw.created, now),
+      updatedAt: asTimestamp(raw.updatedAt ?? raw.updated_at ?? raw.updated, now),
       messageCount,
     },
   };
@@ -204,17 +226,13 @@ export function useSessions(agentId: string | null) {
     queryKey: sessionsQueryKey(agentId ?? undefined),
     queryFn: async () => {
       const params: Record<string, unknown> = {};
-      if (agentId) params.agentId = agentId;
-
-      console.log("[useSessions] Fetching with params:", params);
+      if (agentId) {
+        params.agentId = agentId;
+        params.includeDerivedTitles = true;
+      }
 
       const res = await gateway.request<unknown>("sessions.list", params);
-      console.log("[useSessions] Raw response:", JSON.stringify(res));
-
-      const sessions = extractSessions(res);
-      console.log("[useSessions] Parsed sessions:", sessions);
-
-      return sessions;
+      return extractSessions(res);
     },
     enabled: isConnected && agentId !== null,
     staleTime: 15_000,

@@ -1,7 +1,11 @@
 // GatewayClient — WebSocket client for OpenClaw Gateway (Protocol v3)
-// Token-only authentication (no device identity required).
+// Uses signed device identity + shared token for Control UI pairing/auth.
 
-import WebSocket from "@tauri-apps/plugin-websocket";
+import { Channel, invoke } from "@tauri-apps/api/core";
+import WebSocket, {
+  type ConnectionConfig,
+  type Message as TauriWsMessage,
+} from "@tauri-apps/plugin-websocket";
 import {
   createRequest,
   generateRequestId,
@@ -12,6 +16,7 @@ import {
 import {
   buildConnectParams,
   extractNonce,
+  GATEWAY_CLIENT_INFO,
   parseAuthResponse,
   type AuthResult,
 } from "./auth";
@@ -21,6 +26,8 @@ import type {
   EventCallback,
   EventSubscription,
   GatewayConfig,
+  GatewayHandshakeTraceEntry,
+  GatewayRuntimeContext,
   PendingRequest,
 } from "./types";
 
@@ -35,11 +42,174 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 
 /** Base reconnect delay in ms */
 const BASE_RECONNECT_DELAY = 1_000;
+const MAX_HANDSHAKE_TRACE = 40;
 const DEBUG_GATEWAY = false;
+
+function normalizeSocketConfig(config?: ConnectionConfig): ConnectionConfig | undefined {
+  if (!config) {
+    return undefined;
+  }
+
+  if (!config.headers) {
+    return config;
+  }
+
+  return {
+    ...config,
+    headers: Array.from(new Headers(config.headers).entries()),
+  };
+}
+
+async function connectWithBufferedMessages(
+  url: string,
+  config?: ConnectionConfig,
+): Promise<{
+  socket: WebSocket;
+  bufferedMessages: TauriWsMessage[];
+  addListener: (listener: (message: TauriWsMessage) => void) => () => void;
+}> {
+  const listeners = new Set<(message: TauriWsMessage) => void>();
+  const bufferedMessages: TauriWsMessage[] = [];
+  const onMessage = new Channel<TauriWsMessage>();
+
+  onMessage.onmessage = (message) => {
+    if (listeners.size === 0) {
+      bufferedMessages.push(message);
+      return;
+    }
+
+    for (const cb of listeners) {
+      cb(message);
+    }
+  };
+
+  const id = await invoke<number>("plugin:websocket|connect", {
+    url,
+    onMessage,
+    config: normalizeSocketConfig(config),
+  });
+
+  return {
+    socket: new WebSocket(id, listeners),
+    bufferedMessages,
+    addListener: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+type GatewayRpcError = Error & {
+  gatewayCode?: string;
+  gatewayDetails?: unknown;
+};
+
+function createGatewayRpcError(response: GatewayResponse): GatewayRpcError {
+  const error = new Error(
+    response.error?.message ?? response.error?.code ?? "Unknown error",
+  ) as GatewayRpcError;
+  error.gatewayCode = response.error?.code;
+  error.gatewayDetails = response.error?.details;
+  return error;
+}
+
+function readGatewayDetailCode(error: unknown): string | null {
+  const details = (error as GatewayRpcError | null | undefined)?.gatewayDetails;
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return null;
+  }
+
+  const code = (details as { code?: unknown }).code;
+  return typeof code === "string" && code.trim().length > 0 ? code : null;
+}
+
+function readGatewayRequestId(error: unknown): string | null {
+  const details = (error as GatewayRpcError | null | undefined)?.gatewayDetails;
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return null;
+  }
+
+  const requestId = (details as { requestId?: unknown }).requestId;
+  return typeof requestId === "string" && requestId.trim().length > 0 ? requestId : null;
+}
+
+type GatewayCloseFrame = {
+  code: number;
+  reason: string;
+};
+
+function isCloseFrame(value: unknown): value is GatewayCloseFrame {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const frame = value as { code?: unknown; reason?: unknown };
+  return typeof frame.code === "number" && typeof frame.reason === "string";
+}
+
+function decodeBinarySocketMessage(data: number[]): string | null {
+  try {
+    return new TextDecoder().decode(Uint8Array.from(data));
+  } catch {
+    return null;
+  }
+}
+
+function summarizeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function readRuntimeValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveRuntimeContext(explicitOriginHeader: string | null = null): GatewayRuntimeContext {
+  const location = typeof window !== "undefined" ? window.location : null;
+  const documentRef = typeof document !== "undefined" ? document : null;
+  const navigatorRef = typeof navigator !== "undefined" ? navigator : null;
+  const tauriWindow =
+    typeof window !== "undefined"
+      ? (window as Window & { __TAURI__?: unknown; __TAURI_INTERNALS__?: unknown })
+      : null;
+
+  return {
+    clientId: GATEWAY_CLIENT_INFO.id,
+    clientMode: GATEWAY_CLIENT_INFO.mode,
+    socketTransport: "tauri-plugin-websocket",
+    explicitOriginHeader,
+    locationHref: readRuntimeValue(location?.href),
+    locationOrigin: readRuntimeValue(location?.origin),
+    locationProtocol: readRuntimeValue(location?.protocol),
+    locationHost: readRuntimeValue(location?.host),
+    documentBaseUri: readRuntimeValue(documentRef?.baseURI),
+    referrer: readRuntimeValue(documentRef?.referrer),
+    userAgent: readRuntimeValue(navigatorRef?.userAgent),
+    platform: readRuntimeValue(navigatorRef?.platform),
+    tauriDetected: Boolean(tauriWindow?.__TAURI__ || tauriWindow?.__TAURI_INTERNALS__),
+  };
+}
+
+function summarizeRuntimeContext(context: GatewayRuntimeContext): string {
+  return [
+    `client=${context.clientId}/${context.clientMode}`,
+    `origin=${context.locationOrigin ?? "n/a"}`,
+    `href=${context.locationHref ?? "n/a"}`,
+    `transport=${context.socketTransport}`,
+    `originHeader=${context.explicitOriginHeader ?? "none"}`,
+    `tauri=${context.tauriDetected ? "yes" : "no"}`,
+  ].join(" ");
+}
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
+  private removeWsListener: (() => void) | null = null;
   private config: GatewayConfig | null = null;
+  private _runtimeContext: GatewayRuntimeContext = resolveRuntimeContext();
 
   // State
   private _state: ConnectionState = "disconnected";
@@ -48,6 +218,16 @@ export class GatewayClient {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private authTimer: ReturnType<typeof setTimeout> | null = null;
+  private authResolve: (() => void) | null = null;
+  private authReject: ((error: Error) => void) | null = null;
+  private connectSent = false;
+  private suppressReconnect = false;
+  private intentionalDisconnect = false;
+  private connectChallengeSeen = false;
+  private connectRequestId: string | null = null;
+  private lastCloseFrame: GatewayCloseFrame | null = null;
+  private lastHandshakeStage = "idle";
 
   // RPC tracking
   private pendingRequests = new Map<string, PendingRequest>();
@@ -60,6 +240,7 @@ export class GatewayClient {
   private _eventCount = 0;
   private _lastEventAt = 0;
   private _eventLog: Array<{ event: string; time: number; payloadSnippet: string }> = [];
+  private _handshakeTrace: GatewayHandshakeTraceEntry[] = [];
 
   /** Total gateway events received since connection */
   get eventCount(): number {
@@ -74,6 +255,16 @@ export class GatewayClient {
   /** Recent event log (last 20 events) for diagnostics */
   get recentEvents(): Array<{ event: string; time: number; payloadSnippet: string }> {
     return this._eventLog;
+  }
+
+  /** Recent handshake trace for verification/auth diagnostics */
+  get recentHandshakeTrace(): GatewayHandshakeTraceEntry[] {
+    return this._handshakeTrace;
+  }
+
+  /** Current desktop runtime/WebView context for origin diagnostics */
+  get runtimeContext(): GatewayRuntimeContext {
+    return this._runtimeContext;
   }
 
   /** Current connection state */
@@ -108,6 +299,12 @@ export class GatewayClient {
     this.reconnectAttempts = 0;
     this._error = null;
     this._authResult = null;
+    this.suppressReconnect = false;
+    this.intentionalDisconnect = false;
+    this._runtimeContext = resolveRuntimeContext();
+    this.resetHandshakeDiagnostics();
+    this.recordHandshake("runtime.context", summarizeRuntimeContext(this._runtimeContext));
+    this.recordHandshake("connect.start", config.url);
 
     this.setState("connecting");
 
@@ -115,18 +312,19 @@ export class GatewayClient {
       await this.createConnection();
     } catch (err) {
       const message = String(err);
-      if (message.includes("pairing required")) {
-        const requestIdMatch = message.match(/requestId:\s*([^\s)]+)/i);
-        const requestId = requestIdMatch?.[1];
+      const detailCode = readGatewayDetailCode(err);
+      if (detailCode === "PAIRING_REQUIRED" || message.includes("pairing required")) {
+        const requestId = readGatewayRequestId(err) ?? message.match(/requestId:\s*([^\s)]+)/i)?.[1];
         const requestIdHint = requestId ? ` Request ID: ${requestId}` : "";
-        this._error = {
-          code: "PAIRING_REQUIRED",
-          message: `Pairing required. Approve this device on the Gateway side.${requestIdHint}`,
-          timestamp: Date.now(),
-        };
+        this._error = this.createConnectionError(
+          "PAIRING_REQUIRED",
+          `Pairing required. Approve this device on the Gateway side.${requestIdHint}`,
+        );
+        this.suppressReconnect = true;
         this.setState("pairing_required");
         throw err;
       }
+      this.suppressReconnect = true;
       this.handleError("CONNECTION_FAILED", String(err));
       throw err;
     }
@@ -136,7 +334,10 @@ export class GatewayClient {
    * Disconnect from Gateway
    */
   async disconnect(): Promise<void> {
+    this.intentionalDisconnect = true;
+    this.suppressReconnect = true;
     this.clearTimers();
+    this.clearAuthenticationState();
     this.rejectAllPending("Disconnected");
 
     if (this.ws) {
@@ -147,6 +348,8 @@ export class GatewayClient {
       }
       this.ws = null;
     }
+    this.removeWsListener?.();
+    this.removeWsListener = null;
 
     this._authResult = null;
     this.setState("disconnected");
@@ -224,138 +427,98 @@ export class GatewayClient {
 
   private async createConnection(): Promise<void> {
     const url = this.config!.url;
+    const authPromise = this.beginAuthentication();
+    let socket: WebSocket | null = null;
 
-    this.ws = await WebSocket.connect(url, {
-      headers: {},
-    });
-
-    this.ws.addListener((msg) => {
-      if (typeof msg === "string") {
-        if (DEBUG_GATEWAY) {
-          console.log("[GatewayClient] WS string message (unexpected):", (msg as string).slice(0, 200));
-        }
-        return;
-      }
-
-      const wsMsg = msg as { type?: string; data?: string };
-      const wsType = typeof wsMsg.type === "string" ? wsMsg.type.toLowerCase() : "";
-
-      if (wsType === "close" || wsType === "closed") {
-        this.handleClose();
-        return;
-      }
-
-      if (wsType === "text" && wsMsg.data) {
-        this.handleMessage(wsMsg.data);
-        return;
-      }
-
-      // Log any unhandled message types
-      if (DEBUG_GATEWAY) {
-        console.log("[GatewayClient] Unhandled WS message type:", wsMsg.type);
-      }
-    });
-
-    // Wait for challenge and authenticate
     this.setState("authenticating");
-    await this.authenticate();
+    this.armAuthenticationTimeout();
+    this.recordHandshake("socket.connect.start", url);
+
+    try {
+      const { socket: nextSocket, bufferedMessages, addListener } = await connectWithBufferedMessages(url, {
+        headers: {},
+      });
+
+      socket = nextSocket;
+      this.ws = nextSocket;
+      this.removeWsListener = addListener((msg) => this.handleSocketMessage(msg));
+      this.recordHandshake("socket.connect.ready", `buffered=${bufferedMessages.length}`);
+
+      for (const bufferedMessage of bufferedMessages) {
+        this.handleSocketMessage(bufferedMessage);
+      }
+
+      await authPromise;
+    } catch (err) {
+      this.recordHandshake("auth.failed", summarizeError(err));
+      this.suppressReconnect = true;
+      this.removeWsListener?.();
+      this.removeWsListener = null;
+      const activeSocket = socket ?? this.ws;
+      this.ws = null;
+      if (activeSocket) {
+        await activeSocket.disconnect().catch(() => {
+          // Ignore close failures while unwinding a failed handshake.
+        });
+      }
+      this.clearAuthenticationState();
+      throw err;
+    }
   }
 
-  private authenticate(): Promise<void> {
+  private handleSocketMessage(msg: TauriWsMessage): void {
+    const wsMsg = msg as { type?: string; data?: string };
+    const wsType = typeof wsMsg.type === "string" ? wsMsg.type.toLowerCase() : "";
+
+    if (wsType === "close" || wsType === "closed") {
+      const closeFrame = isCloseFrame(wsMsg.data) ? wsMsg.data : null;
+      if (closeFrame) {
+        this.lastCloseFrame = closeFrame;
+        this.recordHandshake(
+          "socket.close",
+          `code=${closeFrame.code} reason=${closeFrame.reason || "n/a"}`,
+        );
+      } else {
+        this.recordHandshake("socket.close");
+      }
+      this.handleClose(closeFrame);
+      return;
+    }
+
+    if (wsType === "text" && typeof wsMsg.data === "string") {
+      this.handleMessage(wsMsg.data);
+      return;
+    }
+
+    if (wsType === "binary" && Array.isArray((msg as { data?: unknown }).data)) {
+      const decoded = decodeBinarySocketMessage((msg as { data: number[] }).data);
+      this.recordHandshake(
+        "socket.binary",
+        decoded ? `bytes=${(msg as { data: number[] }).data.length} decoded` : "undecodable",
+      );
+      if (decoded) {
+        this.handleMessage(decoded);
+      }
+      return;
+    }
+
+    // Log any unhandled message types
+    if (DEBUG_GATEWAY) {
+      console.log("[GatewayClient] Unhandled WS message type:", wsMsg.type);
+    }
+  }
+
+  private beginAuthentication(): Promise<void> {
+    this.clearAuthenticationState();
+    this.connectSent = false;
+    this.connectChallengeSeen = false;
+    this.connectRequestId = null;
+
     return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this._authHandler = null;
-        reject(new Error("Authentication timeout"));
-      }, 15_000);
-
-      const challengeHandler = async (rawData: string) => {
-        const msg = parseMessage(rawData);
-        if (!msg || msg.type !== "event") return;
-
-        const event = msg as GatewayEvent;
-        const nonce = extractNonce(event);
-        if (!nonce) return;
-
-        // Clear the handler so it doesn't fire again
-        this._authHandler = null;
-
-        try {
-          // Build connect params (token + persisted device identity)
-          const params = await buildConnectParams(this.config!, nonce);
-          const id = generateRequestId();
-          const req = createRequest(id, "connect", params);
-
-          // Register response handler
-          this.pendingRequests.set(id, {
-            resolve: (payload: unknown) => {
-              clearTimeout(timeout);
-
-              // Log the FULL hello-ok response for debugging
-              if (DEBUG_GATEWAY) {
-                console.log(
-                  "[Gateway] Full hello-ok response:",
-                  JSON.stringify(payload, null, 2),
-                );
-              }
-
-              const authResult = parseAuthResponse(payload);
-              if (authResult) {
-                this._authResult = authResult;
-                if (DEBUG_GATEWAY) {
-                  console.log("[Gateway] Connected:", authResult.connId);
-                  console.log("[Gateway] Available methods:", authResult.methods);
-                  console.log("[Gateway] Available events:", authResult.events);
-                  console.log("[Gateway] Snapshot keys:", Object.keys(authResult.snapshot));
-                }
-                this.setState("connected");
-                this.startHeartbeat();
-
-                // Try to subscribe to events after connection
-                this.subscribeToEvents(authResult.events).then(
-                  () => {
-                    if (DEBUG_GATEWAY) {
-                      console.log("[Gateway] Event subscription complete");
-                    }
-                    if (this._error?.code === "EVENT_SUBSCRIPTION_FAILED") {
-                      this._error = null;
-                      this.notifyStateListeners();
-                    }
-                  },
-                  (err) => {
-                    if (DEBUG_GATEWAY) {
-                      console.warn("[Gateway] Event subscription failed:", err);
-                    }
-                    this.setWarning(
-                      "EVENT_SUBSCRIPTION_FAILED",
-                      "Connected, but failed to subscribe to real-time events. Message updates may be delayed.",
-                    );
-                  },
-                );
-
-                resolve();
-              } else {
-                reject(new Error("Invalid auth response"));
-              }
-            },
-            reject: (err: Error) => {
-              clearTimeout(timeout);
-              reject(err);
-            },
-            timer: timeout,
-          });
-
-          await this.send(JSON.stringify(req));
-        } catch (err) {
-          clearTimeout(timeout);
-          reject(err);
-        }
-      };
-
-      this._authHandler = challengeHandler;
+      this.authResolve = resolve;
+      this.authReject = reject;
     });
   }
-
-  private _authHandler: ((data: string) => void) | null = null;
 
   private handleMessage(raw: string): void {
     // Log ALL raw messages (truncated) for diagnostics
@@ -364,13 +527,13 @@ export class GatewayClient {
       console.log("[GatewayClient] Raw message:", raw.slice(0, 500));
     }
 
-    // During authentication, pass to auth handler first
-    if (this._authHandler && this._state === "authenticating") {
-      this._authHandler(raw);
-    }
-
     const msg = parseMessage(raw);
-    if (!msg) return;
+    if (!msg) {
+      if (this.hasPendingAuthentication()) {
+        this.recordHandshake("message.unparsed", raw.slice(0, 180));
+      }
+      return;
+    }
 
     switch (msg.type) {
       case "res":
@@ -388,16 +551,22 @@ export class GatewayClient {
     const pending = this.pendingRequests.get(res.id);
     if (!pending) return;
 
+    if (res.id === this.connectRequestId) {
+      this.recordHandshake(
+        res.ok ? "connect.response.ok" : "connect.response.error",
+        res.ok
+          ? "hello-ok"
+          : `${res.error?.code ?? "UNKNOWN"}: ${res.error?.message ?? "request failed"}`,
+      );
+    }
+
     this.pendingRequests.delete(res.id);
     clearTimeout(pending.timer);
 
     if (res.ok) {
       pending.resolve(this.normalizeResponsePayload(res.payload));
     } else {
-      const errMsg = res.error?.message ?? "Unknown error";
-      const details = (res.error?.details as { requestId?: string } | undefined) ?? undefined;
-      const requestIdHint = details?.requestId ? ` (requestId: ${details.requestId})` : "";
-      pending.reject(new Error(`RPC error: ${errMsg}${requestIdHint}`));
+      pending.reject(createGatewayRpcError(res));
     }
   }
 
@@ -423,6 +592,22 @@ export class GatewayClient {
   }
 
   private handleEvent(event: GatewayEvent): void {
+    if (event.event === "connect.challenge") {
+      const nonce = extractNonce(event);
+      this.connectChallengeSeen = true;
+      this.recordHandshake(
+        "challenge.received",
+        nonce ? `nonce_len=${nonce.trim().length}` : "missing_nonce",
+      );
+      if (nonce && this.hasPendingAuthentication()) {
+        void this.sendConnect(nonce);
+      } else if (!nonce && this.hasPendingAuthentication()) {
+        this.suppressReconnect = true;
+        this.clearAuthenticationState(new Error("Gateway connect challenge missing nonce"));
+      }
+      return;
+    }
+
     // Diagnostic tracking
     this._eventCount++;
     this._lastEventAt = Date.now();
@@ -468,10 +653,35 @@ export class GatewayClient {
     }
   }
 
-  private handleClose(): void {
-    this._authHandler = null;
+  private handleClose(closeFrame?: GatewayCloseFrame | null): void {
+    const hadPendingAuthentication = this.hasPendingAuthentication();
+    const resolvedCloseFrame = closeFrame ?? this.lastCloseFrame;
+    if (hadPendingAuthentication) {
+      this.recordHandshake(
+        "auth.closed",
+        `challenge=${this.connectChallengeSeen ? "yes" : "no"} connectSent=${this.connectSent ? "yes" : "no"}`,
+      );
+    }
+    this.removeWsListener?.();
+    this.removeWsListener = null;
+    this.ws = null;
+    this.clearTimers();
+    this.rejectAllPending("Connection closed");
+    this.clearAuthenticationState(
+      hadPendingAuthentication
+        ? new Error(
+            resolvedCloseFrame
+              ? `Connection closed during authentication (${resolvedCloseFrame.code}: ${resolvedCloseFrame.reason || "n/a"})`
+              : "Connection closed during authentication",
+          )
+        : undefined,
+    );
 
     if (this._state === "disconnected") return;
+
+    if (this.intentionalDisconnect || this.suppressReconnect) {
+      return;
+    }
 
     if (this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS && this.config) {
       this.scheduleReconnect();
@@ -592,6 +802,7 @@ export class GatewayClient {
   private scheduleReconnect(): void {
     this.setState("reconnecting");
     this.reconnectAttempts++;
+    this.suppressReconnect = false;
 
     const delay =
       Math.min(BASE_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts - 1), 30_000) +
@@ -625,10 +836,6 @@ export class GatewayClient {
     if (this._state === state) return;
     this._state = state;
 
-    if (state === "connected") {
-      this._authHandler = null;
-    }
-
     this.notifyStateListeners();
   }
 
@@ -643,12 +850,12 @@ export class GatewayClient {
   }
 
   private handleError(code: string, message: string): void {
-    this._error = { code, message, timestamp: Date.now() };
+    this._error = this.createConnectionError(code, message);
     this.setState("error");
   }
 
   private setWarning(code: string, message: string): void {
-    this._error = { code, message, timestamp: Date.now() };
+    this._error = this.createConnectionError(code, message);
     this.notifyStateListeners();
   }
 
@@ -659,6 +866,9 @@ export class GatewayClient {
     try {
       await this.ws.send(data);
     } catch (err) {
+      if (this.hasPendingAuthentication()) {
+        this.recordHandshake("socket.send.failed", summarizeError(err));
+      }
       console.warn("[GatewayClient] send failed, marking connection as closed:", err);
       this.handleClose();
       throw err;
@@ -674,6 +884,10 @@ export class GatewayClient {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    if (this.authTimer) {
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+    }
   }
 
   private rejectAllPending(reason: string): void {
@@ -682,6 +896,207 @@ export class GatewayClient {
       pending.reject(new Error(reason));
       this.pendingRequests.delete(id);
     }
+  }
+
+  private armAuthenticationTimeout(): void {
+    if (this.authTimer) {
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+    }
+    this.authTimer = setTimeout(() => {
+      this.recordHandshake(
+        "auth.timeout",
+        `challenge=${this.connectChallengeSeen ? "yes" : "no"} connectSent=${this.connectSent ? "yes" : "no"}`,
+      );
+      const error = new Error("Authentication timeout waiting for connect challenge");
+      this.suppressReconnect = true;
+      this.clearAuthenticationState(error);
+      if (this.ws) {
+        void this.ws.disconnect().catch(() => {
+          // Ignore disconnect errors while tearing down a failed handshake.
+        });
+      }
+    }, 15_000);
+  }
+
+  private hasPendingAuthentication(): boolean {
+    return Boolean(this.authResolve || this.authReject);
+  }
+
+  private clearAuthenticationState(error?: Error): void {
+    if (this.authTimer) {
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+    }
+
+    const reject = error ? this.authReject : null;
+
+    this.authResolve = null;
+    this.authReject = null;
+    this.connectSent = false;
+    this.connectRequestId = null;
+
+    if (reject && error) {
+      reject(error);
+    }
+  }
+
+  private completeAuthentication(): void {
+    if (this.authTimer) {
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+    }
+
+    const resolve = this.authResolve;
+    this.authResolve = null;
+    this.authReject = null;
+    this.connectSent = false;
+    this.connectRequestId = null;
+    resolve?.();
+  }
+
+  private async sendConnect(nonce: string): Promise<void> {
+    if (this.connectSent || !this.config) {
+      return;
+    }
+
+    const trimmedNonce = nonce.trim();
+    if (!trimmedNonce) {
+      this.recordHandshake("connect.nonce.invalid");
+      this.suppressReconnect = true;
+      this.clearAuthenticationState(new Error("Gateway connect challenge missing nonce"));
+      return;
+    }
+
+    this.connectSent = true;
+    this.recordHandshake("connect.prepare", `nonce_len=${trimmedNonce.length}`);
+    if (this.authTimer) {
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+    }
+
+    try {
+      const params = await buildConnectParams(this.config, trimmedNonce);
+      const id = generateRequestId();
+      this.connectRequestId = id;
+      this.recordHandshake(
+        "connect.prepared",
+        `req=${id} auth=${params.auth?.token ? "token" : params.auth?.deviceToken ? "device-token" : "none"}`,
+      );
+      const req = createRequest(id, "connect", params as Record<string, unknown>);
+
+      this.pendingRequests.set(id, {
+        resolve: (payload: unknown) => {
+          const authResult = parseAuthResponse(payload);
+          if (!authResult) {
+            this.recordHandshake("connect.payload.invalid");
+            this.suppressReconnect = true;
+            this.clearAuthenticationState(new Error("Invalid auth response"));
+            return;
+          }
+
+          this._authResult = authResult;
+          this.recordHandshake("connect.authenticated", authResult.connId ?? "connected");
+
+          if (DEBUG_GATEWAY) {
+            console.log("[Gateway] Connected:", authResult.connId);
+            console.log("[Gateway] Available methods:", authResult.methods);
+            console.log("[Gateway] Available events:", authResult.events);
+            console.log("[Gateway] Snapshot keys:", Object.keys(authResult.snapshot));
+          }
+
+          this.setState("connected");
+          this.startHeartbeat();
+          this.completeAuthentication();
+
+          this.subscribeToEvents(authResult.events).then(
+            () => {
+              if (DEBUG_GATEWAY) {
+                console.log("[Gateway] Event subscription complete");
+              }
+              if (this._error?.code === "EVENT_SUBSCRIPTION_FAILED") {
+                this._error = null;
+                this.notifyStateListeners();
+              }
+            },
+            (err) => {
+              if (DEBUG_GATEWAY) {
+                console.warn("[Gateway] Event subscription failed:", err);
+              }
+              this.setWarning(
+                "EVENT_SUBSCRIPTION_FAILED",
+                "Connected, but failed to subscribe to real-time events. Message updates may be delayed.",
+              );
+            },
+          );
+        },
+        reject: (err: Error) => {
+          this.recordHandshake("connect.rejected", summarizeError(err));
+          this.suppressReconnect = true;
+          this.clearAuthenticationState(err);
+        },
+        timer: setTimeout(() => {
+          this.pendingRequests.delete(id);
+          this.recordHandshake("connect.rpc.timeout", `req=${id}`);
+          this.suppressReconnect = true;
+          this.clearAuthenticationState(new Error(`RPC timeout: connect (${RPC_TIMEOUT}ms)`));
+        }, RPC_TIMEOUT),
+      });
+
+      this.recordHandshake("connect.send", id);
+      await this.send(JSON.stringify(req));
+      this.recordHandshake("connect.sent", id);
+    } catch (err) {
+      this.recordHandshake("connect.prepare.failed", summarizeError(err));
+      this.suppressReconnect = true;
+      this.connectSent = false;
+      this.clearAuthenticationState(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  private resetHandshakeDiagnostics(): void {
+    this.connectChallengeSeen = false;
+    this.connectRequestId = null;
+    this.lastCloseFrame = null;
+    this.lastHandshakeStage = "idle";
+    this._handshakeTrace = [];
+  }
+
+  private recordHandshake(stage: string, detail?: string): void {
+    const entry: GatewayHandshakeTraceEntry = {
+      stage,
+      timestamp: Date.now(),
+      detail,
+    };
+    this.lastHandshakeStage = stage;
+    this._handshakeTrace.push(entry);
+    if (this._handshakeTrace.length > MAX_HANDSHAKE_TRACE) {
+      this._handshakeTrace.shift();
+    }
+
+    if (DEBUG_GATEWAY) {
+      console.log("[GatewayClient] handshake", stage, detail ?? "");
+    }
+  }
+
+  private createConnectionError(code: string, message: string): ConnectionError {
+    const closeCode = this.lastCloseFrame?.code;
+    const closeReason = this.lastCloseFrame?.reason;
+    const detailParts = [
+      this.lastHandshakeStage !== "idle" ? `stage=${this.lastHandshakeStage}` : null,
+      typeof closeCode === "number"
+        ? `close=${closeCode}${closeReason ? `:${closeReason}` : ""}`
+        : null,
+    ].filter(Boolean);
+
+    return {
+      code,
+      message: detailParts.length > 0 ? `${message} (${detailParts.join(" ")})` : message,
+      timestamp: Date.now(),
+      stage: this.lastHandshakeStage,
+      closeCode,
+      closeReason,
+    };
   }
 }
 

@@ -577,31 +577,34 @@ function renderSessionsCard(
     }
   };
 
-  const buildSessionMeta = (s: UsageSessionEntry): string[] => {
-    const parts: string[] = [];
+  const buildSessionMeta = (s: UsageSessionEntry): Array<{ label: string; value: string }> => {
+    const parts: Array<{ label: string; value: string }> = [];
     if (showColumn("channel") && s.channel) {
-      parts.push(`channel:${s.channel}`);
+      parts.push({ label: "Channel", value: s.channel });
     }
     if (showColumn("agent") && s.agentId) {
-      parts.push(`agent:${s.agentId}`);
+      parts.push({ label: "Agent", value: s.agentId });
     }
     if (showColumn("provider") && (s.modelProvider || s.providerOverride)) {
-      parts.push(`provider:${s.modelProvider ?? s.providerOverride}`);
+      parts.push({ label: "Provider", value: s.modelProvider ?? s.providerOverride ?? "—" });
     }
     if (showColumn("model") && s.model) {
-      parts.push(`model:${s.model}`);
+      parts.push({ label: "Model", value: s.model });
     }
     if (showColumn("messages") && s.usage?.messageCounts) {
-      parts.push(`msgs:${s.usage.messageCounts.total}`);
+      parts.push({ label: "Msgs", value: `${s.usage.messageCounts.total}` });
     }
     if (showColumn("tools") && s.usage?.toolUsage) {
-      parts.push(`tools:${s.usage.toolUsage.totalCalls}`);
+      parts.push({ label: "Tools", value: `${s.usage.toolUsage.totalCalls}` });
     }
-    if (showColumn("errors") && s.usage?.messageCounts) {
-      parts.push(`errors:${s.usage.messageCounts.errors}`);
+    if (showColumn("errors") && (s.usage?.messageCounts?.errors ?? 0) > 0) {
+      parts.push({ label: "Errors", value: `${s.usage?.messageCounts?.errors ?? 0}` });
     }
     if (showColumn("duration") && s.usage?.durationMs) {
-      parts.push(`dur:${formatDurationCompact(s.usage.durationMs, { spaced: true }) ?? "—"}`);
+      parts.push({
+        label: "Duration",
+        value: formatDurationCompact(s.usage.durationMs, { spaced: true }) ?? "—",
+      });
     }
     return parts;
   };
@@ -661,7 +664,22 @@ function renderSessionsCard(
       >
         <div class="session-bar-label">
           <div class="session-bar-title">${displayLabel}</div>
-          ${meta.length > 0 ? html`<div class="session-bar-meta">${meta.join(" · ")}</div>` : nothing}
+          ${
+            meta.length > 0
+              ? html`
+                  <div class="session-bar-meta">
+                    ${meta.map(
+                      (item) => html`
+                        <span class="session-bar-meta-item">
+                          <span class="session-bar-meta-label">${item.label}</span>
+                          <span class="session-bar-meta-value">${item.value}</span>
+                        </span>
+                      `,
+                    )}
+                  </div>
+                `
+              : nothing
+          }
         </div>
         <div class="session-bar-track" style="display: none;"></div>
         <div class="session-bar-actions">
@@ -675,7 +693,9 @@ function renderSessionsCard(
           >
             Copy
           </button>
-          <div class="session-bar-value">${isTokenMode ? formatTokens(value) : formatCost(value)}</div>
+          <div class="session-bar-value" title=${isTokenMode ? "Tokens" : "Cost"}>
+            ${isTokenMode ? formatTokens(value) : formatCost(value)}
+          </div>
         </div>
       </div>
     `;
@@ -699,10 +719,18 @@ function renderSessionsCard(
       </div>
       <div class="sessions-card-meta">
         <div class="sessions-card-stats">
-          <span>${isTokenMode ? formatTokens(avgValue) : formatCost(avgValue)} avg</span>
-          <span>${totalErrors} errors</span>
+          <span class="sessions-card-stat">
+            <span class="sessions-card-stat-label">Avg</span>
+            <span class="sessions-card-stat-value"
+              >${isTokenMode ? formatTokens(avgValue) : formatCost(avgValue)}</span
+            >
+          </span>
+          <span class="sessions-card-stat">
+            <span class="sessions-card-stat-label">Errors</span>
+            <span class="sessions-card-stat-value">${totalErrors}</span>
+          </span>
         </div>
-        <div class="chart-toggle small">
+        <div class="chart-toggle small sessions-toggle">
           <button
             class="toggle-btn ${sessionsTab === "all" ? "active" : ""}"
             @click=${() => onSessionsTabChange("all")}
@@ -717,7 +745,7 @@ function renderSessionsCard(
           </button>
         </div>
         <label class="sessions-sort">
-          <span>Sort</span>
+          <span>Sort by</span>
           <select
             @change=${(e: Event) => onSessionSortChange((e.target as HTMLSelectElement).value as typeof sessionSort)}
           >
@@ -749,32 +777,34 @@ function renderSessionsCard(
         sessionsTab === "recent"
           ? recentEntries.length === 0
             ? html`
-                <div class="muted" style="padding: 20px; text-align: center">No recent sessions</div>
+                <div class="sessions-empty-state">No recent sessions yet</div>
               `
             : html`
-	                <div class="session-bars" style="max-height: 220px; margin-top: 6px;">
+	                <div class="session-bars session-bars-compact">
 	                  ${recentEntries.map((s) => renderSessionBarRow(s, selectedSet.has(s.key)))}
 	                </div>
 	              `
           : sessions.length === 0
             ? html`
-                <div class="muted" style="padding: 20px; text-align: center">No sessions in range</div>
+                <div class="sessions-empty-state">No sessions in this range</div>
               `
             : html`
 	                <div class="session-bars">
 	                  ${sortedWithDir
                       .slice(0, 50)
                       .map((s) => renderSessionBarRow(s, selectedSet.has(s.key)))}
-	                  ${sessions.length > 50 ? html`<div class="muted" style="padding: 8px; text-align: center; font-size: 11px;">+${sessions.length - 50} more</div>` : nothing}
+	                  ${sessions.length > 50
+	                    ? html`<div class="session-bars-more">+${sessions.length - 50} more</div>`
+	                    : nothing}
 	                </div>
 	              `
       }
       ${
         selectedCount > 1
           ? html`
-              <div style="margin-top: 10px;">
-                <div class="sessions-card-count">Selected (${selectedCount})</div>
-                <div class="session-bars" style="max-height: 160px; margin-top: 6px;">
+              <div class="sessions-selection-panel">
+                <div class="sessions-selection-title">Selected (${selectedCount})</div>
+                <div class="session-bars session-bars-selected">
                   ${selectedEntries.map((s) => renderSessionBarRow(s, true))}
                 </div>
               </div>

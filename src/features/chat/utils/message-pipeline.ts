@@ -1,4 +1,10 @@
-import type { AssistantMessage, ChatMessage } from "@/lib/gateway";
+import type {
+  AssistantMessage,
+  ChatAttachment,
+  ChatMessage,
+  MessageToolCard,
+  ToolCallMessage,
+} from "@/lib/gateway";
 
 const LOCAL_CACHE_WINDOW_MS = 10 * 60_000;
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/i;
@@ -250,11 +256,105 @@ function normalizeTimestamp(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function resolveBaseRole(rawRole: string): "user" | "assistant" | "system" | "ignore" {
+function normalizeContentItems(message: unknown): Array<Record<string, unknown>> {
+  if (!message || typeof message !== "object") {
+    return [];
+  }
+  const content = (message as Record<string, unknown>).content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object");
+}
+
+function extractAttachments(raw: Record<string, unknown>): ChatAttachment[] {
+  const images: ChatAttachment[] = [];
+  for (const item of normalizeContentItems(raw)) {
+    const type = typeof item.type === "string" ? item.type.toLowerCase() : "";
+    if (type === "image") {
+      const source = item.source as Record<string, unknown> | undefined;
+      if (source?.type === "base64" && typeof source.data === "string") {
+        const mediaType = (source.media_type as string) || "image/png";
+        const data = source.data;
+        images.push({
+          id: `att:${images.length}:${mediaType}`,
+          dataUrl: data.startsWith("data:") ? data : `data:${mediaType};base64,${data}`,
+          mimeType: mediaType,
+        });
+        continue;
+      }
+      if (typeof item.url === "string") {
+        images.push({
+          id: `att:${images.length}:url`,
+          dataUrl: item.url,
+          mimeType: "image/*",
+        });
+      }
+      continue;
+    }
+    if (type === "image_url") {
+      const imageUrl = item.image_url as Record<string, unknown> | undefined;
+      if (typeof imageUrl?.url === "string") {
+        images.push({
+          id: `att:${images.length}:url`,
+          dataUrl: imageUrl.url,
+          mimeType: "image/*",
+        });
+      }
+    }
+  }
+  return images;
+}
+
+function extractToolCardsFromRaw(raw: Record<string, unknown>): MessageToolCard[] {
+  const cards: MessageToolCard[] = [];
+  for (const item of normalizeContentItems(raw)) {
+    const type = typeof item.type === "string" ? item.type.toLowerCase() : "";
+    const toolCallId = typeof raw.toolCallId === "string" ? raw.toolCallId : undefined;
+    const name = typeof item.name === "string" ? item.name : "tool";
+    if (["toolcall", "tool_call", "tooluse", "tool_use"].includes(type)) {
+      cards.push({
+        kind: "call",
+        name,
+        args: item.arguments ?? item.args,
+        toolCallId,
+      });
+      continue;
+    }
+    if (["toolresult", "tool_result"].includes(type)) {
+      cards.push({
+        kind: "result",
+        name,
+        text:
+          typeof item.text === "string"
+            ? item.text
+            : typeof item.content === "string"
+              ? item.content
+              : undefined,
+        toolCallId,
+      });
+    }
+  }
+  return cards;
+}
+
+function detectToolRole(raw: Record<string, unknown>): boolean {
+  const role = typeof raw.role === "string" ? raw.role.toLowerCase() : "";
+  if (role === "tool" || role === "toolresult" || role === "tool_result" || role === "function") {
+    return true;
+  }
+  if (typeof raw.toolCallId === "string" || typeof raw.tool_call_id === "string") {
+    return true;
+  }
+  return extractToolCardsFromRaw(raw).some((card) => card.kind === "result");
+}
+
+function resolveBaseRole(rawRole: string, raw?: Record<string, unknown>): "user" | "assistant" | "system" | "tool" | "ignore" {
   const role = rawRole.toLowerCase();
   if (role === "user" || role === "human") return "user";
   if (role === "assistant" || role === "ai" || role === "bot") return "assistant";
   if (role === "system") return "system";
+  if (raw && detectToolRole(raw)) return "tool";
   return "ignore";
 }
 
@@ -272,7 +372,7 @@ export function normalizeGatewayMessage(
   const roleRaw = (obj.role ?? obj.type) as string | undefined;
   if (!roleRaw || typeof roleRaw !== "string") return null;
 
-  const role = resolveBaseRole(roleRaw);
+  const role = resolveBaseRole(roleRaw, obj);
   if (role === "ignore") return null;
 
   const timestamp = normalizeTimestamp(
@@ -281,6 +381,8 @@ export function normalizeGatewayMessage(
   );
   const rawText = extractRawText(raw) ?? "";
   const content = sanitizeVisibleText(rawText, role);
+  const attachments = extractAttachments(obj);
+  const toolCards = extractToolCardsFromRaw(obj);
   const rawReasoning =
     extractRawThinking(raw) ??
     (typeof obj.reasoning === "string" ? obj.reasoning : null) ??
@@ -298,22 +400,58 @@ export function normalizeGatewayMessage(
     );
 
   if (role === "user") {
-    if (!content) return null;
-    return { role: "user", id, content, timestamp };
+    if (!content && attachments.length === 0) return null;
+    return { role: "user", id, content, timestamp, attachments, raw: obj };
   }
   if (role === "assistant") {
-    if ((!content && !reasoning) || isSilentAssistantReplyText(content)) return null;
+    if ((!content && !reasoning && attachments.length === 0 && toolCards.length === 0) || isSilentAssistantReplyText(content)) return null;
     return {
       role: "assistant",
       id,
       content,
       timestamp,
       isStreaming: false,
+      attachments,
+      raw: obj,
+      ...(toolCards.length > 0 ? { toolCards } : {}),
       ...(reasoning ? { reasoning } : {}),
     };
   }
-  if (!content) return null;
-  return { role: "system", id, content, timestamp };
+  if (role === "tool") {
+    const toolCallId =
+      (typeof obj.toolCallId === "string" && obj.toolCallId) ||
+      (typeof obj.tool_call_id === "string" && obj.tool_call_id) ||
+      toolCards.find((card) => card.toolCallId)?.toolCallId ||
+      `tool:${id}`;
+    const toolName =
+      (typeof obj.toolName === "string" && obj.toolName) ||
+      (typeof obj.tool_name === "string" && obj.tool_name) ||
+      toolCards[0]?.name ||
+      "tool";
+    const toolResult = toolCards.find((card) => card.kind === "result");
+    const toolCall = toolCards.find((card) => card.kind === "call");
+    const statusRaw = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
+    const status: ToolCallMessage["status"] =
+      statusRaw === "error"
+        ? "error"
+        : statusRaw === "completed" || toolResult
+          ? "completed"
+          : "started";
+    return {
+      role: "tool",
+      id,
+      toolName,
+      toolCallId,
+      input: toolCall?.args ?? obj.args ?? obj.arguments ?? obj.input,
+      output: toolResult?.text ?? obj.output ?? obj.result,
+      error: typeof obj.error === "string" ? obj.error : undefined,
+      status,
+      timestamp,
+      raw: obj,
+    };
+  }
+  if (!content && attachments.length === 0) return null;
+  return { role: "system", id, content, timestamp, attachments, raw: obj };
 }
 
 function extractArrayMessages(
@@ -394,6 +532,31 @@ function getComparableKey(message: ChatMessage): string | null {
     const text = normalizeComparableText(message.content);
     if (!text) return null;
     return `${message.role}|${text}`;
+  }
+  if (message.role === "tool") {
+    const tool = message as ToolCallMessage;
+    const toolCallId = tool.toolCallId?.trim();
+    if (toolCallId) {
+      return `tool|${toolCallId}`;
+    }
+
+    const toolName = tool.toolName?.trim() ?? "tool";
+    let comparableInput = "";
+    if (typeof tool.input === "string") {
+      comparableInput = tool.input;
+    } else if (tool.input != null) {
+      try {
+        comparableInput = JSON.stringify(tool.input);
+      } catch {
+        comparableInput = String(tool.input);
+      }
+    }
+
+    const input = normalizeComparableText(comparableInput).slice(0, 160);
+    if (!toolName && !input) {
+      return null;
+    }
+    return `tool|${toolName}|${input}`;
   }
   return null;
 }

@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { gateway } from "@/lib/gateway";
-import type { Agent } from "@/lib/gateway";
+import type { Agent, AgentCapabilities } from "@/lib/gateway";
 import { useConnectionStore } from "@/features/connection/store";
 
 /** Query key for agent list */
@@ -34,6 +34,19 @@ function normalizeAgent(raw: Record<string, unknown>): Agent | null {
     status,
     avatar: raw.avatar as string | undefined,
     description: (raw.description ?? raw.desc) as string | undefined,
+    capabilities:
+      raw.capabilities && typeof raw.capabilities === "object"
+        ? {
+            commandExecution:
+              (raw.capabilities as Record<string, unknown>).commandExecution === "off" ||
+              (raw.capabilities as Record<string, unknown>).commandExecution === "ask" ||
+              (raw.capabilities as Record<string, unknown>).commandExecution === "auto"
+                ? (raw.capabilities as Record<string, unknown>).commandExecution as AgentCapabilities["commandExecution"]
+                : "off",
+            webAccess: (raw.capabilities as Record<string, unknown>).webAccess === true,
+            fileTools: (raw.capabilities as Record<string, unknown>).fileTools === true,
+          }
+        : undefined,
   };
 }
 
