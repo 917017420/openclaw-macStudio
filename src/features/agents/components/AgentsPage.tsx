@@ -663,12 +663,13 @@ export function AgentsPage() {
   });
 
   useEffect(() => {
-    if (!activeFileName || !activeFileQuery.data) return;
+    const activeFileData = activeFileQuery.data;
+    if (!activeFileName || !activeFileData) return;
     setFileDrafts((current) => {
-      if (Object.hasOwn(current, activeFileName)) {
+      if (Object.prototype.hasOwnProperty.call(current, activeFileName)) {
         return current;
       }
-      return { ...current, [activeFileName]: activeFileQuery.data.content ?? "" };
+      return { ...current, [activeFileName]: activeFileData.content ?? "" };
     });
   }, [activeFileName, activeFileQuery.data]);
 

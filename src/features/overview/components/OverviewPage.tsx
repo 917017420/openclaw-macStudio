@@ -571,8 +571,6 @@ export function OverviewPage() {
     };
   }, []);
 
-  const showLoadingShell = overviewQuery.isLoading && !overviewQuery.data;
-
   const overviewQuery = useQuery<OverviewData>({
     queryKey: [...OVERVIEW_QUERY_KEY, activeConfigId ?? "none"],
     enabled: isConnected,
@@ -581,6 +579,8 @@ export function OverviewPage() {
     placeholderData: (previousData) => previousData,
     queryFn: loadOverview,
   });
+
+  const showLoadingShell = overviewQuery.isLoading && !overviewQuery.data;
 
   const snapshot = asRecord(gateway.authResult?.snapshot);
   const statusRecord = overviewQuery.data?.status ?? snapshot;
