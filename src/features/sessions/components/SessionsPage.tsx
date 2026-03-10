@@ -630,8 +630,9 @@ export function SessionsPage() {
       <section className="sessions-card sessions-card--hero">
         <div className="sessions-card__row sessions-card__row--top">
           <div>
+            <div className="sessions-card__eyebrow">Control Surface</div>
             <div className="sessions-card__title">Sessions</div>
-            <div className="sessions-card__sub">Active session keys and per-session overrides.</div>
+            <div className="sessions-card__sub">Official-style session workspace for active keys, cached metrics, and per-session overrides.</div>
           </div>
           <div className="sessions-hero__actions">
             <button

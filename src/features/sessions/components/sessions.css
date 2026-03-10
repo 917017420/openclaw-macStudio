@@ -1,9 +1,11 @@
 .sessions-page {
   height: 100%;
   overflow: auto;
-  padding: 20px 22px 26px;
+  padding: var(--control-page-padding);
   display: grid;
-  gap: 18px;
+  gap: var(--control-page-gap);
+  scrollbar-gutter: stable both-edges;
+  scroll-padding-top: 20px;
   background:
     radial-gradient(circle at top, color-mix(in srgb, var(--accent) 7%, transparent), transparent 38%),
     linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, var(--bg)) 0%, var(--bg) 100%);
@@ -29,13 +31,11 @@
 }
 
 .sessions-card {
-  border: 1px solid color-mix(in srgb, var(--border) 94%, transparent);
-  background: color-mix(in srgb, var(--panel) 96%, var(--bg-elevated));
-  border-radius: 18px;
+  border: 1px solid var(--control-card-border);
+  background: var(--control-card-bg);
+  border-radius: var(--control-card-radius);
   padding: 20px;
-  box-shadow:
-    0 14px 34px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  box-shadow: var(--control-card-shadow);
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,
@@ -43,10 +43,8 @@
 }
 
 .sessions-card:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 86%, transparent);
-  box-shadow:
-    0 18px 40px rgba(0, 0, 0, 0.16),
-    inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  border-color: var(--control-card-border-strong);
+  box-shadow: var(--control-card-shadow-hover);
 }
 
 .sessions-card--hero {
@@ -66,6 +64,26 @@
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
+}
+
+.sessions-card__eyebrow {
+  margin-bottom: 6px;
+  color: color-mix(in srgb, var(--accent) 78%, white 22%);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sessions-card--hero .sessions-card__title {
+  font-size: 28px;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+}
+
+.sessions-card--hero .sessions-card__sub {
+  max-width: 68ch;
+  line-height: 1.55;
 }
 
 .sessions-card__sub {
@@ -316,8 +334,8 @@
   min-height: 30px;
   padding: 6px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
-  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-pill-bg);
   font-size: 12px;
   line-height: 1;
 }

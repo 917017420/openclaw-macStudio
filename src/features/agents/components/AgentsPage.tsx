@@ -1002,6 +1002,7 @@ export function AgentsPage() {
     <div className="workspace-page agents-page">
       <div className="workspace-toolbar agents-toolbar">
         <div>
+          <div className="agents-page__eyebrow">Control Surface</div>
           <h2 className="workspace-title">Agents</h2>
           <p className="workspace-subtitle">
             Official-style agent workspace with list management, config editing, files, tools, and skills panels.

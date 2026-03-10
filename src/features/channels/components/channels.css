@@ -1,17 +1,25 @@
 .channels-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--control-page-gap);
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 20px;
+  padding: var(--control-page-padding);
   container: channels-page / inline-size;
   color: var(--text);
   scrollbar-gutter: stable both-edges;
+  scroll-padding-top: 20px;
   background:
     radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 34%),
     linear-gradient(180deg, color-mix(in srgb, var(--panel) 22%, transparent), transparent 24%);
+}
+
+.channels-page .workspace-section {
+  border-color: var(--control-card-border);
+  border-radius: var(--control-card-radius-lg);
+  background: var(--control-card-bg);
+  box-shadow: var(--control-card-shadow);
 }
 
 .channels-page--empty {
@@ -54,7 +62,7 @@
 
 .channels-page .workspace-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 28px;
   line-height: 1.04;
   letter-spacing: -0.04em;
   color: var(--text-strong);
@@ -159,13 +167,10 @@
   flex-direction: column;
   gap: 14px;
   min-width: 0;
-  border-radius: 22px;
-  border-color: color-mix(in srgb, var(--border) 86%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 96%, white 4%), color-mix(in srgb, var(--panel) 94%, transparent));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
-    0 18px 42px rgba(0, 0, 0, 0.14);
+  border-radius: var(--control-card-radius-lg);
+  border-color: var(--control-card-border);
+  background: var(--control-card-bg);
+  box-shadow: var(--control-card-shadow);
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease,
@@ -174,10 +179,8 @@
 }
 
 .channels-card:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 90%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 5%, transparent),
-    0 24px 46px rgba(0, 0, 0, 0.18);
+  border-color: var(--control-card-border-strong);
+  box-shadow: var(--control-card-shadow-hover);
   transform: translateY(-1px);
 }
 

@@ -1,10 +1,12 @@
 .overview-page {
   height: 100%;
   overflow: auto;
-  padding: 10px;
+  padding: var(--control-page-padding);
   display: grid;
-  gap: 18px;
+  gap: var(--control-page-gap);
   align-content: start;
+  scrollbar-gutter: stable both-edges;
+  scroll-padding-top: 20px;
 }
 
 .overview-hero {
@@ -12,22 +14,22 @@
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
-  padding: 6px 4px 0;
+  gap: 20px;
+  padding: 2px 2px 0;
 }
 
 .overview-hero__eyebrow {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 78%, white 22%);
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .overview-hero__title {
   margin: 4px 0 0;
   color: var(--text-strong);
-  font-size: 30px;
+  font-size: 32px;
   line-height: 1.05;
   letter-spacing: -0.05em;
 }
@@ -50,7 +52,7 @@
 
 .overview-grid {
   display: grid;
-  gap: 18px;
+  gap: var(--control-page-gap);
   align-items: start;
 }
 
@@ -67,18 +69,14 @@
 
 .overview-card {
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34%),
-    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 96%, transparent), color-mix(in srgb, var(--panel) 98%, transparent));
+  border: 1px solid var(--control-card-border);
+  border-radius: var(--control-card-radius);
+  background: var(--control-card-bg);
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  box-shadow:
-    0 16px 40px rgba(0, 0, 0, 0.18),
-    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  box-shadow: var(--control-card-shadow);
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease,
@@ -87,10 +85,8 @@
 }
 
 .overview-card:hover {
-  border-color: var(--border-strong);
-  box-shadow:
-    0 22px 50px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  border-color: var(--control-card-border-strong);
+  box-shadow: var(--control-card-shadow-hover);
   transform: translateY(-1px);
 }
 
@@ -125,9 +121,9 @@
   gap: 8px;
   min-height: 30px;
   padding: 0 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-card-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-strong) 86%, transparent);
+  background: var(--control-pill-bg);
   color: var(--text);
   font-size: 12px;
   font-weight: 500;

@@ -753,7 +753,7 @@ export function OverviewPage() {
     <div className="overview-page">
       <section className="overview-hero">
         <div>
-          <div className="overview-hero__eyebrow">OpenClaw Dashboard</div>
+          <div className="overview-hero__eyebrow">Control Surface</div>
           <h2 className="overview-hero__title">Overview</h2>
           <p className="overview-hero__subtitle">
             Official-style gateway command center with live health, usage, alerts, and quick actions.
