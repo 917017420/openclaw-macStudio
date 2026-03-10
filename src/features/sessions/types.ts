@@ -6,17 +6,27 @@ export interface SessionDefaults {
   contextTokens?: number | null;
 }
 
+export interface SessionDeliveryContext {
+  channel?: string;
+  to?: string;
+  accountId?: string;
+}
+
 export interface SessionRow {
   key: string;
   kind: SessionKind;
   label?: string;
   displayName?: string;
   derivedTitle?: string;
+  lastMessagePreview?: string;
   surface?: string;
   subject?: string;
   room?: string;
   space?: string;
-  lastMessagePreview?: string;
+  channel?: string;
+  groupChannel?: string;
+  chatType?: string;
+  originLabel?: string;
   updatedAt: number | null;
   sessionId?: string;
   systemSent?: boolean;
@@ -25,12 +35,19 @@ export interface SessionRow {
   verboseLevel?: string;
   reasoningLevel?: string;
   elevatedLevel?: string;
+  sendPolicy?: "allow" | "deny";
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  totalTokensFresh?: boolean;
+  responseUsage?: "on" | "off" | "tokens" | "full" | string;
   model?: string;
   modelProvider?: string;
   contextTokens?: number;
+  deliveryContext?: SessionDeliveryContext;
+  lastChannel?: string;
+  lastTo?: string;
+  lastAccountId?: string;
 }
 
 export interface SessionsListSnapshot {
@@ -65,6 +82,25 @@ function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeDeliveryContext(value: unknown): SessionDeliveryContext | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const context: SessionDeliveryContext = {
+    channel: asOptionalString(raw.channel),
+    to: asOptionalString(raw.to),
+    accountId: asOptionalString(raw.accountId),
+  };
+
+  return context.channel || context.to || context.accountId ? context : undefined;
+}
+
 export function normalizeSessionRow(raw: unknown): SessionRow | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -81,6 +117,17 @@ export function normalizeSessionRow(raw: unknown): SessionRow | null {
   }
 
   const kind = obj.kind;
+  const inputTokens = asOptionalNumber(obj.inputTokens);
+  const outputTokens = asOptionalNumber(obj.outputTokens);
+  const totalTokens = asOptionalNumber(obj.totalTokens)
+    ?? (inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : undefined);
+
+  const origin = obj.origin && typeof obj.origin === "object"
+    ? (obj.origin as Record<string, unknown>)
+    : null;
+
   return {
     key,
     kind:
@@ -90,11 +137,15 @@ export function normalizeSessionRow(raw: unknown): SessionRow | null {
     label: asOptionalString(obj.label),
     displayName: asOptionalString(obj.displayName),
     derivedTitle: asOptionalString(obj.derivedTitle),
-    surface: asOptionalString(obj.surface),
-    subject: asOptionalString(obj.subject),
-    room: asOptionalString(obj.room),
-    space: asOptionalString(obj.space),
     lastMessagePreview: asOptionalString(obj.lastMessagePreview),
+    surface: asOptionalString(obj.surface) ?? asOptionalString(obj.channel),
+    subject: asOptionalString(obj.subject),
+    room: asOptionalString(obj.room) ?? asOptionalString(obj.groupChannel),
+    space: asOptionalString(obj.space),
+    channel: asOptionalString(obj.channel),
+    groupChannel: asOptionalString(obj.groupChannel),
+    chatType: asOptionalString(obj.chatType),
+    originLabel: asOptionalString(obj.originLabel) ?? asOptionalString(origin?.label),
     updatedAt: asOptionalNumber(obj.updatedAt) ?? null,
     sessionId: asOptionalString(obj.sessionId),
     systemSent: obj.systemSent === true,
@@ -103,12 +154,22 @@ export function normalizeSessionRow(raw: unknown): SessionRow | null {
     verboseLevel: asOptionalString(obj.verboseLevel),
     reasoningLevel: asOptionalString(obj.reasoningLevel),
     elevatedLevel: asOptionalString(obj.elevatedLevel),
-    inputTokens: asOptionalNumber(obj.inputTokens),
-    outputTokens: asOptionalNumber(obj.outputTokens),
-    totalTokens: asOptionalNumber(obj.totalTokens),
+    sendPolicy:
+      obj.sendPolicy === "allow" || obj.sendPolicy === "deny"
+        ? obj.sendPolicy
+        : undefined,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    totalTokensFresh: asOptionalBoolean(obj.totalTokensFresh),
+    responseUsage: asOptionalString(obj.responseUsage),
     model: asOptionalString(obj.model),
     modelProvider: asOptionalString(obj.modelProvider),
     contextTokens: asOptionalNumber(obj.contextTokens),
+    deliveryContext: normalizeDeliveryContext(obj.deliveryContext),
+    lastChannel: asOptionalString(obj.lastChannel),
+    lastTo: asOptionalString(obj.lastTo),
+    lastAccountId: asOptionalString(obj.lastAccountId),
   };
 }
 
