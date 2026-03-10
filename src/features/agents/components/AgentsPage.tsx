@@ -1699,11 +1699,6 @@ export function AgentsPage() {
                     <span>`skills.install` and `skills.update` are available here. Dedicated uninstall RPCs are not exposed by the current gateway, so disabling a skill is the closest supported fallback.</span>
                   </div>
 
-                  <div className="agents-banner agents-banner--info">
-                    <TriangleAlert size={14} />
-                    <span>`skills.install` and `skills.update` are available here. Dedicated uninstall RPCs are not exposed by the current gateway, so disabling a skill is the closest supported fallback.</span>
-                  </div>
-
                   <div className="agents-skill-meta">
                     <div className="agents-kv">
                       <span>Workspace</span>
