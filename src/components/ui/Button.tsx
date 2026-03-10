@@ -11,13 +11,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-primary text-text-inverse hover:bg-primary-hover active:opacity-90",
+    "border border-transparent bg-primary text-text-inverse shadow-sm hover:-translate-y-px hover:bg-primary-hover hover:shadow-md active:translate-y-0 active:shadow-sm",
   secondary:
-    "bg-surface-2 text-text-primary border border-border hover:bg-surface-3 active:opacity-90",
+    "border border-border bg-surface-2 text-text-primary shadow-sm hover:-translate-y-px hover:border-border-hover hover:bg-surface-3 hover:shadow-md active:translate-y-0 active:shadow-sm",
   ghost:
-    "bg-transparent text-text-secondary hover:bg-surface-2 hover:text-text-primary active:opacity-90",
+    "border border-transparent bg-transparent text-text-secondary hover:-translate-y-px hover:bg-surface-2 hover:text-text-primary hover:shadow-sm active:translate-y-0 active:shadow-none",
   danger:
-    "bg-status-error text-white hover:opacity-90 active:opacity-80",
+    "border border-transparent bg-status-error text-white shadow-sm hover:-translate-y-px hover:opacity-95 hover:shadow-md active:translate-y-0 active:shadow-sm active:opacity-90",
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
@@ -32,8 +32,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={`inline-flex items-center justify-center font-medium transition-all duration-150 cursor-pointer
+          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-0
           ${variantStyles[variant]} ${sizeStyles[size]}
-          ${disabled || loading ? "opacity-50 cursor-not-allowed" : ""}
+          ${disabled || loading ? "opacity-50 cursor-not-allowed pointer-events-none" : ""}
           ${className}`}
         disabled={disabled || loading}
         {...props}

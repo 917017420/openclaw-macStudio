@@ -663,12 +663,13 @@ export function AgentsPage() {
   });
 
   useEffect(() => {
-    if (!activeFileName || !activeFileQuery.data) return;
+    const activeFileData = activeFileQuery.data;
+    if (!activeFileName || !activeFileData) return;
     setFileDrafts((current) => {
-      if (Object.hasOwn(current, activeFileName)) {
+      if (Object.prototype.hasOwnProperty.call(current, activeFileName)) {
         return current;
       }
-      return { ...current, [activeFileName]: activeFileQuery.data.content ?? "" };
+      return { ...current, [activeFileName]: activeFileData.content ?? "" };
     });
   }, [activeFileName, activeFileQuery.data]);
 
@@ -1002,6 +1003,7 @@ export function AgentsPage() {
     <div className="workspace-page agents-page">
       <div className="workspace-toolbar agents-toolbar">
         <div>
+          <div className="agents-page__eyebrow">Control Surface</div>
           <h2 className="workspace-title">Agents</h2>
           <p className="workspace-subtitle">
             Official-style agent workspace with list management, config editing, files, tools, and skills panels.

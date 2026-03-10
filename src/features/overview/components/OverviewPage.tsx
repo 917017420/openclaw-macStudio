@@ -571,8 +571,6 @@ export function OverviewPage() {
     };
   }, []);
 
-  const showLoadingShell = overviewQuery.isLoading && !overviewQuery.data;
-
   const overviewQuery = useQuery<OverviewData>({
     queryKey: [...OVERVIEW_QUERY_KEY, activeConfigId ?? "none"],
     enabled: isConnected,
@@ -581,6 +579,8 @@ export function OverviewPage() {
     placeholderData: (previousData) => previousData,
     queryFn: loadOverview,
   });
+
+  const showLoadingShell = overviewQuery.isLoading && !overviewQuery.data;
 
   const snapshot = asRecord(gateway.authResult?.snapshot);
   const statusRecord = overviewQuery.data?.status ?? snapshot;
@@ -753,7 +753,7 @@ export function OverviewPage() {
     <div className="overview-page">
       <section className="overview-hero">
         <div>
-          <div className="overview-hero__eyebrow">OpenClaw Dashboard</div>
+          <div className="overview-hero__eyebrow">Control Surface</div>
           <h2 className="overview-hero__title">Overview</h2>
           <p className="overview-hero__subtitle">
             Official-style gateway command center with live health, usage, alerts, and quick actions.

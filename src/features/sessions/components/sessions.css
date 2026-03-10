@@ -1,9 +1,11 @@
 .sessions-page {
   height: 100%;
   overflow: auto;
-  padding: 20px 22px 26px;
+  padding: var(--control-page-padding);
   display: grid;
-  gap: 18px;
+  gap: var(--control-page-gap);
+  scrollbar-gutter: stable both-edges;
+  scroll-padding-top: 20px;
   background:
     radial-gradient(circle at top, color-mix(in srgb, var(--accent) 7%, transparent), transparent 38%),
     linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, var(--bg)) 0%, var(--bg) 100%);
@@ -29,13 +31,11 @@
 }
 
 .sessions-card {
-  border: 1px solid color-mix(in srgb, var(--border) 94%, transparent);
-  background: color-mix(in srgb, var(--panel) 96%, var(--bg-elevated));
-  border-radius: 18px;
+  border: 1px solid var(--control-card-border);
+  background: var(--control-card-bg);
+  border-radius: var(--control-card-radius);
   padding: 20px;
-  box-shadow:
-    0 14px 34px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  box-shadow: var(--control-card-shadow);
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease,
@@ -43,10 +43,8 @@
 }
 
 .sessions-card:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 86%, transparent);
-  box-shadow:
-    0 18px 40px rgba(0, 0, 0, 0.16),
-    inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  border-color: var(--control-card-border-strong);
+  box-shadow: var(--control-card-shadow-hover);
 }
 
 .sessions-card--hero {
@@ -66,6 +64,26 @@
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
+}
+
+.sessions-card__eyebrow {
+  margin-bottom: 6px;
+  color: color-mix(in srgb, var(--accent) 78%, white 22%);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sessions-card--hero .sessions-card__title {
+  font-size: 28px;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+}
+
+.sessions-card--hero .sessions-card__sub {
+  max-width: 68ch;
+  line-height: 1.55;
 }
 
 .sessions-card__sub {
@@ -92,9 +110,9 @@
   gap: 8px;
   min-height: 36px;
   padding: 9px 16px;
-  border: 1px solid color-mix(in srgb, var(--border) 96%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  border: 1px solid var(--control-card-border);
+  border-radius: 12px;
+  background: var(--control-pill-bg);
   color: var(--text);
   font: inherit;
   font-size: 13px;
@@ -110,7 +128,7 @@
 }
 
 .sessions-btn:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--border-strong) 92%, transparent);
+  border-color: var(--control-card-border-strong);
   background: color-mix(in srgb, var(--bg-hover) 92%, transparent);
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
@@ -126,8 +144,8 @@
 .sessions-field select:focus-visible,
 .sessions-search input:focus-visible,
 .sessions-row:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--control-focus-ring);
 }
 
 .sessions-btn:disabled {
@@ -200,9 +218,9 @@
 .sessions-search {
   min-width: 0;
   min-height: 38px;
-  border: 1px solid color-mix(in srgb, var(--border) 94%, transparent);
+  border: 1px solid var(--control-card-border);
   background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--text);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
   transition:
@@ -235,14 +253,14 @@
 .sessions-field input:hover,
 .sessions-field select:hover,
 .sessions-search:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
+  border-color: var(--control-card-border-strong);
 }
 
 .sessions-field input:focus,
 .sessions-field select:focus,
 .sessions-search:focus-within {
   border-color: color-mix(in srgb, var(--accent) 54%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: var(--control-focus-ring);
 }
 
 .sessions-field--checkbox {
@@ -282,10 +300,11 @@
 .sessions-callout {
   padding: 14px 16px;
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
-  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-muted-bg);
   font-size: 13px;
   line-height: 1.5;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
 }
 
 .sessions-callout.is-danger {
@@ -316,8 +335,8 @@
   min-height: 30px;
   padding: 6px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
-  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-pill-bg);
   font-size: 12px;
   line-height: 1;
 }
@@ -630,6 +649,7 @@
   gap: 14px;
   padding-right: 4px;
   scroll-padding-top: 16px;
+  scrollbar-gutter: stable;
 }
 
 .sessions-group {
@@ -677,7 +697,7 @@
 }
 
 .sessions-row:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 94%, transparent);
+  border-color: var(--control-card-border-strong);
   background: color-mix(in srgb, var(--bg-hover) 70%, var(--panel-strong));
   transform: translateY(-1px);
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
@@ -773,7 +793,7 @@
   text-align: center;
   border: 1px dashed color-mix(in srgb, var(--border-strong) 62%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
 }
 
 .sessions-card--detail .sessions-empty-inline,
@@ -803,6 +823,7 @@
   gap: 14px;
   padding-right: 4px;
   scroll-behavior: smooth;
+  scrollbar-gutter: stable;
 }
 
 .sessions-detail-hero {
@@ -1039,7 +1060,18 @@
 
 @media (max-width: 1100px) {
   .sessions-page {
-    padding: 16px;
+    padding: var(--control-page-padding);
+  }
+
+  .sessions-meta-pill {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+    justify-content: space-between;
+  }
+
+  .sessions-meta-pill span,
+  .sessions-meta-pill strong {
+    white-space: normal;
   }
 
   .sessions-filters {
@@ -1074,8 +1106,8 @@
 
 @media (max-width: 760px) {
   .sessions-page {
-    padding: 12px;
-    gap: 14px;
+    padding: var(--control-page-padding);
+    gap: var(--control-page-gap);
   }
 
   .sessions-card {
@@ -1103,7 +1135,18 @@
     width: 100%;
   }
 
-  .sessions-btn {
+  .sessions-hero__actions,
+  .sessions-detail-actions,
+  .sessions-detail-hero__actions,
+  .sessions-filters__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sessions-hero__actions .sessions-btn,
+  .sessions-detail-actions .sessions-btn,
+  .sessions-detail-hero__actions .sessions-btn,
+  .sessions-filters__actions .sessions-btn {
     width: 100%;
   }
 
@@ -1114,5 +1157,22 @@
   .sessions-bar-row,
   .sessions-bar-row--token {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .sessions-hero__actions,
+  .sessions-detail-actions,
+  .sessions-detail-hero__actions,
+  .sessions-filters__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .sessions-meta-pill,
+  .sessions-hero__actions,
+  .sessions-detail-actions,
+  .sessions-detail-hero__actions,
+  .sessions-filters__actions {
+    flex: 1 1 100%;
   }
 }
