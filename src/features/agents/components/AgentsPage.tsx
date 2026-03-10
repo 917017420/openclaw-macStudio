@@ -4,14 +4,21 @@ import {
   ArrowRight,
   Bot,
   FileCode2,
+  FolderPlus,
+  KeyRound,
+  PackagePlus,
+  PencilLine,
   RefreshCw,
   Search,
   Sparkles,
+  Trash2,
+  TriangleAlert,
   Wrench,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, StatusBadge } from "@/components/ui";
 import { useToolsCatalog } from "@/features/agents/hooks/useToolsCatalog";
+import { useModels } from "@/features/chat/hooks/useModels";
 import { useAgentsDirectory } from "@/features/chat/hooks/useAgents";
 import { useConnectionStore } from "@/features/connection/store";
 import { useChatStore } from "@/features/chat/store";
@@ -21,6 +28,8 @@ import { formatRelativeTime, truncate } from "@/lib/utils";
 import "./agents.css";
 
 type AgentPanel = "overview" | "files" | "tools" | "skills";
+type AgentSort = "default" | "name" | "id" | "status";
+type AgentEditorMode = "create" | "edit" | null;
 
 type AgentIdentityResult = {
   agentId: string;
@@ -46,7 +55,7 @@ type AgentsFilesListResult = {
 
 type SkillInstallOption = {
   id: string;
-  kind: "brew" | "node" | "go" | "uv";
+  kind: "brew" | "node" | "go" | "uv" | "download";
   label: string;
   bins: string[];
 };
@@ -60,8 +69,8 @@ type SkillStatusEntry = {
   skillKey: string;
   bundled?: boolean;
   primaryEnv?: string;
-  emoji?: string;
   homepage?: string;
+  emoji?: string;
   always: boolean;
   disabled: boolean;
   blockedByAllowlist: boolean;
@@ -93,12 +102,66 @@ type SkillGroup = {
   skills: SkillStatusEntry[];
 };
 
+type SkillConfigEntry = {
+  enabled?: boolean;
+  apiKey?: string;
+  env?: Record<string, string>;
+};
+
+type AgentConfigEntry = {
+  id: string;
+  name?: string;
+  workspace?: string;
+  model?: unknown;
+};
+
+type GatewayConfigShape = {
+  agents?: {
+    defaults?: {
+      workspace?: string;
+      model?: unknown;
+    };
+    list?: AgentConfigEntry[];
+  };
+  skills?: {
+    entries?: Record<string, SkillConfigEntry>;
+  };
+};
+
+type ConfigSnapshotIssue = {
+  path: string;
+  message: string;
+};
+
+type ConfigSnapshot = {
+  path: string | null;
+  exists: boolean | null;
+  raw: string | null;
+  hash: string | null;
+  valid: boolean | null;
+  config: Record<string, unknown> | null;
+  issues: ConfigSnapshotIssue[];
+};
+
+type AgentFormState = {
+  name: string;
+  workspace: string;
+  model: string;
+  avatar: string;
+  emoji: string;
+};
+
 type PageFeedback =
   | {
-      kind: "success" | "error";
+      kind: "success" | "error" | "info";
       message: string;
     }
   | null;
+
+type SkillBusyState = {
+  key: string;
+  action: "toggle" | "install" | "apiKey" | "env";
+} | null;
 
 const PANELS: Array<{ id: AgentPanel; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -114,6 +177,12 @@ const SKILL_SOURCE_GROUPS: Array<{ id: string; label: string; sources: string[] 
   { id: "extra", label: "Extra Skills", sources: ["openclaw-extra"] },
 ];
 
+const STATUS_ORDER: Record<Agent["status"], number> = {
+  running: 0,
+  idle: 1,
+  error: 2,
+};
+
 function normalizeSkillReport(raw: unknown): SkillStatusReport {
   const payload = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const skills = Array.isArray(payload.skills)
@@ -127,6 +196,29 @@ function normalizeSkillReport(raw: unknown): SkillStatusReport {
     workspaceDir: typeof payload.workspaceDir === "string" ? payload.workspaceDir : "",
     managedSkillsDir: typeof payload.managedSkillsDir === "string" ? payload.managedSkillsDir : "",
     skills,
+  };
+}
+
+function normalizeConfigSnapshot(raw: unknown): ConfigSnapshot {
+  if (!raw || typeof raw !== "object") {
+    return { path: null, exists: null, raw: null, hash: null, valid: null, config: null, issues: [] };
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    path: typeof obj.path === "string" ? obj.path : null,
+    exists: typeof obj.exists === "boolean" ? obj.exists : null,
+    raw: typeof obj.raw === "string" ? obj.raw : null,
+    hash: typeof obj.hash === "string" ? obj.hash : null,
+    valid: typeof obj.valid === "boolean" ? obj.valid : null,
+    config: obj.config && typeof obj.config === "object" ? (obj.config as Record<string, unknown>) : null,
+    issues: Array.isArray(obj.issues)
+      ? obj.issues
+          .filter((issue): issue is Record<string, unknown> => Boolean(issue && typeof issue === "object"))
+          .map((issue) => ({
+            path: typeof issue.path === "string" ? issue.path : "(unknown)",
+            message: typeof issue.message === "string" ? issue.message : JSON.stringify(issue),
+          }))
+      : [],
   };
 }
 
@@ -169,7 +261,7 @@ function normalizeFilesList(raw: unknown, agentId: string): AgentsFilesListResul
         : agentId,
     workspace: typeof obj.workspace === "string" ? obj.workspace : "",
     files: Array.isArray(obj.files)
-      ? obj.files.map((file) => normalizeFileEntry(file)).filter(Boolean) as AgentFileEntry[]
+      ? (obj.files.map((file) => normalizeFileEntry(file)).filter(Boolean) as AgentFileEntry[])
       : [],
   };
 }
@@ -197,25 +289,23 @@ function isLikelyEmoji(value?: string | null) {
   const trimmed = value?.trim();
   if (!trimmed) return false;
   if (trimmed.length > 16) return false;
-  if (trimmed.includes("://") || trimmed.includes("/") || trimmed.includes(".")) return false;
+  let hasNonAscii = false;
   for (let index = 0; index < trimmed.length; index += 1) {
     if (trimmed.charCodeAt(index) > 127) {
-      return true;
+      hasNonAscii = true;
+      break;
     }
   }
-  return false;
+  if (!hasNonAscii) return false;
+  if (trimmed.includes("://") || trimmed.includes("/") || trimmed.includes(".")) return false;
+  return true;
 }
 
 function resolveAgentDisplayName(agent: Agent, identity?: AgentIdentityResult | null) {
-  return (
-    identity?.name?.trim() ||
-    agent.identity?.name?.trim() ||
-    agent.name?.trim() ||
-    agent.id
-  );
+  return identity?.name?.trim() || agent.identity?.name?.trim() || agent.name?.trim() || agent.id;
 }
 
-function resolveAgentAvatar(agent: Agent, identity?: AgentIdentityResult | null) {
+function resolveAgentEmoji(agent: Agent, identity?: AgentIdentityResult | null) {
   const candidates = [
     identity?.emoji,
     agent.identity?.emoji,
@@ -223,20 +313,26 @@ function resolveAgentAvatar(agent: Agent, identity?: AgentIdentityResult | null)
     agent.identity?.avatar,
     agent.avatar,
   ];
-  const emoji = candidates.find((value) => isLikelyEmoji(value));
-  if (emoji) {
-    return emoji;
-  }
+  return candidates.find((candidate) => isLikelyEmoji(candidate)) ?? "";
+}
+
+function resolveAgentAvatar(agent: Agent, identity?: AgentIdentityResult | null) {
+  const emoji = resolveAgentEmoji(agent, identity);
+  if (emoji) return emoji;
   return resolveAgentDisplayName(agent, identity).slice(0, 1).toUpperCase();
 }
 
 function countTools(groups?: Array<{ tools: Array<unknown> }>) {
-  return groups?.reduce((count, group) => count + group.tools.length, 0) ?? 0;
+  return (groups ?? []).reduce((sum, group) => sum + group.tools.length, 0);
 }
 
 function formatBytes(bytes?: number) {
-  if (bytes == null || !Number.isFinite(bytes)) return "Unknown size";
-  if (bytes < 1024) return `${bytes} B`;
+  if (bytes == null || !Number.isFinite(bytes)) {
+    return "-";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
   const units = ["KB", "MB", "GB", "TB"];
   let size = bytes / 1024;
   let unitIndex = 0;
@@ -263,9 +359,9 @@ function groupSkills(skills: SkillStatusEntry[]) {
       other.skills.push(skill);
     }
   }
-  const ordered = SKILL_SOURCE_GROUPS
-    .map((group) => groups.get(group.id))
-    .filter((group): group is SkillGroup => Boolean(group && group.skills.length > 0));
+  const ordered = SKILL_SOURCE_GROUPS.map((group) => groups.get(group.id)).filter(
+    (group): group is SkillGroup => Boolean(group && group.skills.length > 0),
+  );
   if (other.skills.length > 0) {
     ordered.push(other);
   }
@@ -289,6 +385,149 @@ function computeSkillReasons(skill: SkillStatusEntry) {
   return reasons;
 }
 
+function resolveConfigShape(config: Record<string, unknown> | null): GatewayConfigShape {
+  return (config as GatewayConfigShape | null) ?? {};
+}
+
+function resolveAgentConfig(config: Record<string, unknown> | null, agentId: string | null) {
+  const cfg = resolveConfigShape(config);
+  const list = Array.isArray(cfg.agents?.list) ? cfg.agents?.list : [];
+  return {
+    entry: agentId ? list.find((agent) => agent?.id === agentId) ?? null : null,
+    defaults: cfg.agents?.defaults,
+  };
+}
+
+function resolveSkillConfig(config: Record<string, unknown> | null, skillKey: string) {
+  const cfg = resolveConfigShape(config);
+  const entries = cfg.skills?.entries ?? {};
+  return entries[skillKey] ?? null;
+}
+
+function resolveModelLabel(model?: unknown): string {
+  if (!model) {
+    return "-";
+  }
+  if (typeof model === "string") {
+    return model.trim() || "-";
+  }
+  if (typeof model === "object" && model) {
+    const record = model as { primary?: string; fallbacks?: string[] };
+    const primary = record.primary?.trim();
+    if (primary) {
+      const fallbackCount = Array.isArray(record.fallbacks) ? record.fallbacks.length : 0;
+      return fallbackCount > 0 ? `${primary} (+${fallbackCount} fallback)` : primary;
+    }
+  }
+  return "-";
+}
+
+function resolveModelPrimary(model?: unknown): string | null {
+  if (!model) {
+    return null;
+  }
+  if (typeof model === "string") {
+    const trimmed = model.trim();
+    return trimmed || null;
+  }
+  if (typeof model === "object" && model) {
+    const record = model as Record<string, unknown>;
+    const candidate =
+      typeof record.primary === "string"
+        ? record.primary
+        : typeof record.model === "string"
+          ? record.model
+          : typeof record.id === "string"
+            ? record.id
+            : typeof record.value === "string"
+              ? record.value
+              : null;
+    const primary = candidate?.trim();
+    return primary || null;
+  }
+  return null;
+}
+
+function uniqueStrings(items: Array<string | null | undefined>) {
+  return [...new Set(items.map((item) => item?.trim() ?? "").filter((item) => item.length > 0))];
+}
+
+function matchesAgentQuery(agent: Agent, identity: AgentIdentityResult | null | undefined, query: string) {
+  if (!query) return true;
+  const haystack = [
+    agent.id,
+    agent.name,
+    agent.description,
+    agent.status,
+    agent.identity?.name,
+    agent.identity?.emoji,
+    identity?.name,
+    identity?.emoji,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+function sortAgents(agents: Agent[], sort: AgentSort, defaultId: string | null) {
+  const next = [...agents];
+  next.sort((left, right) => {
+    if (sort === "default") {
+      if (left.id === defaultId && right.id !== defaultId) return -1;
+      if (right.id === defaultId && left.id !== defaultId) return 1;
+      return resolveAgentDisplayName(left).localeCompare(resolveAgentDisplayName(right));
+    }
+    if (sort === "name") {
+      return resolveAgentDisplayName(left).localeCompare(resolveAgentDisplayName(right));
+    }
+    if (sort === "status") {
+      const statusDiff = STATUS_ORDER[left.status] - STATUS_ORDER[right.status];
+      return statusDiff !== 0 ? statusDiff : left.id.localeCompare(right.id);
+    }
+    return left.id.localeCompare(right.id);
+  });
+  return next;
+}
+
+function buildAgentFormSeed(params: {
+  agent?: Agent | null;
+  identity?: AgentIdentityResult | null;
+  config?: Record<string, unknown> | null;
+  files?: AgentsFilesListResult | null;
+}) {
+  const agentId = params.agent?.id ?? null;
+  const resolvedConfig = resolveAgentConfig(params.config ?? null, agentId);
+  return {
+    name: params.agent ? resolveAgentDisplayName(params.agent, params.identity) : "",
+    workspace:
+      params.files?.workspace ||
+      resolvedConfig.entry?.workspace ||
+      resolvedConfig.defaults?.workspace ||
+      "",
+    model:
+      resolveModelPrimary(resolvedConfig.entry?.model) ??
+      resolveModelPrimary(resolvedConfig.defaults?.model) ??
+      "",
+    avatar:
+      params.identity?.avatar?.trim() ||
+      params.agent?.identity?.avatar?.trim() ||
+      params.agent?.avatar?.trim() ||
+      "",
+    emoji: params.identity?.emoji?.trim() || params.agent?.identity?.emoji?.trim() || "",
+  } satisfies AgentFormState;
+}
+
+function emptyAgentForm(defaultWorkspace: string) {
+  return {
+    name: "",
+    workspace: defaultWorkspace,
+    model: "",
+    avatar: "",
+    emoji: "",
+  } satisfies AgentFormState;
+}
+
 export function AgentsPage() {
   const navigate = useNavigate();
   const isConnected = useConnectionStore((state) => state.state === "connected");
@@ -298,24 +537,40 @@ export function AgentsPage() {
   const setSelectedModel = useChatStore((state) => state.setSelectedModel);
 
   const [panel, setPanel] = useState<AgentPanel>("overview");
+  const [editorMode, setEditorMode] = useState<AgentEditorMode>(null);
+  const [listFilter, setListFilter] = useState("");
+  const [sortBy, setSortBy] = useState<AgentSort>("default");
   const [toolFilter, setToolFilter] = useState("");
   const [skillFilter, setSkillFilter] = useState("");
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [fileDrafts, setFileDrafts] = useState<Record<string, string>>({});
+  const [skillApiKeyDrafts, setSkillApiKeyDrafts] = useState<Record<string, string>>({});
+  const [skillEnvDrafts, setSkillEnvDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [agentForm, setAgentForm] = useState<AgentFormState>(emptyAgentForm(""));
+  const [agentFormSeed, setAgentFormSeed] = useState<AgentFormState>(emptyAgentForm(""));
   const [busyFileName, setBusyFileName] = useState<string | null>(null);
-  const [busySkillKey, setBusySkillKey] = useState<string | null>(null);
+  const [busySkill, setBusySkill] = useState<SkillBusyState>(null);
+  const [savingAgent, setSavingAgent] = useState(false);
   const [feedback, setFeedback] = useState<PageFeedback>(null);
 
-  const deferredToolFilter = useDeferredValue(toolFilter);
-  const deferredSkillFilter = useDeferredValue(skillFilter);
+  const deferredListFilter = useDeferredValue(listFilter.trim().toLowerCase());
+  const deferredToolFilter = useDeferredValue(toolFilter.trim().toLowerCase());
+  const deferredSkillFilter = useDeferredValue(skillFilter.trim().toLowerCase());
 
   const agentsQuery = useAgentsDirectory();
   const agents = agentsQuery.data?.agents ?? [];
   const defaultId = agentsQuery.data?.defaultId ?? null;
 
   useEffect(() => {
-    if (!selectedAgentId && agents.length > 0) {
-      selectAgent(defaultId ?? agents[0].id);
+    if (!agents.length) {
+      if (selectedAgentId) {
+        selectAgent(null);
+      }
+      return;
+    }
+    const hasSelected = selectedAgentId ? agents.some((agent) => agent.id === selectedAgentId) : false;
+    if (!hasSelected) {
+      selectAgent(defaultId ?? agents[0]?.id ?? null);
     }
   }, [agents, defaultId, selectAgent, selectedAgentId]);
 
@@ -327,6 +582,13 @@ export function AgentsPage() {
       null,
     [agents, defaultId, selectedAgentId],
   );
+
+  const configQuery = useQuery<ConfigSnapshot>({
+    queryKey: ["gateway-config", "agents-page"],
+    enabled: isConnected,
+    staleTime: 15_000,
+    queryFn: async () => normalizeConfigSnapshot(await gateway.request<unknown>("config.get")),
+  });
 
   const identityQuery = useQuery<AgentIdentityResult | null>({
     queryKey: activeAgent ? ["agent-identity", activeAgent.id] : ["agent-identity"],
@@ -341,6 +603,7 @@ export function AgentsPage() {
     },
   });
 
+  const modelsQuery = useModels(activeAgent?.id ?? null);
   const toolsQuery = useToolsCatalog(activeAgent?.id ?? null);
 
   const skillsQuery = useQuery<SkillStatusReport>({
@@ -351,15 +614,13 @@ export function AgentsPage() {
       if (!activeAgent) {
         return { workspaceDir: "", managedSkillsDir: "", skills: [] };
       }
-      return normalizeSkillReport(
-        await gateway.request<unknown>("skills.status", { agentId: activeAgent.id }),
-      );
+      return normalizeSkillReport(await gateway.request<unknown>("skills.status", { agentId: activeAgent.id }));
     },
   });
 
   const filesListQuery = useQuery<AgentsFilesListResult>({
     queryKey: activeAgent ? ["agent-files-list", activeAgent.id] : ["agent-files-list"],
-    enabled: isConnected && Boolean(activeAgent) && (panel === "overview" || panel === "files"),
+    enabled: isConnected && Boolean(activeAgent) && (panel === "overview" || panel === "files" || editorMode === "edit"),
     staleTime: 15_000,
     queryFn: async () => {
       if (!activeAgent) {
@@ -374,7 +635,7 @@ export function AgentsPage() {
 
   useEffect(() => {
     const files = filesListQuery.data?.files ?? [];
-    if (files.length === 0) {
+    if (!files.length) {
       setActiveFileName(null);
       return;
     }
@@ -415,18 +676,36 @@ export function AgentsPage() {
     setFeedback(null);
   }, [activeAgent?.id, panel]);
 
+  const configShape = configQuery.data?.config ?? null;
   const activeIdentity = identityQuery.data;
+  const activeAgentConfig = useMemo(
+    () => resolveAgentConfig(configShape, activeAgent?.id ?? null),
+    [configShape, activeAgent?.id],
+  );
+
+  const defaultWorkspace = activeAgentConfig.defaults?.workspace ?? "";
+
+  const visibleAgents = useMemo(() => {
+    const filtered = agents.filter((agent) => matchesAgentQuery(agent, agent.id === activeAgent?.id ? activeIdentity : null, deferredListFilter));
+    return sortAgents(filtered, sortBy, defaultId);
+  }, [agents, activeAgent?.id, activeIdentity, defaultId, deferredListFilter, sortBy]);
+
   const capabilityTags = capabilityPills(activeAgent?.capabilities);
   const toolsCount = countTools(toolsQuery.data?.groups);
   const skillsCount = skillsQuery.data?.skills.length ?? 0;
-  const eligibleSkillsCount =
-    skillsQuery.data?.skills.filter((skill) => skill.eligible && !skill.disabled).length ?? 0;
-  const workspacePath = filesListQuery.data?.workspace || skillsQuery.data?.workspaceDir || "Not loaded";
+  const eligibleSkillsCount = skillsQuery.data?.skills.filter((skill) => skill.eligible && !skill.disabled).length ?? 0;
+  const blockedSkillsCount = Math.max(skillsCount - eligibleSkillsCount, 0);
+  const workspacePath =
+    filesListQuery.data?.workspace ||
+    activeAgentConfig.entry?.workspace ||
+    skillsQuery.data?.workspaceDir ||
+    activeAgentConfig.defaults?.workspace ||
+    "Not loaded";
+  const modelLabel = resolveModelLabel(activeAgentConfig.entry?.model ?? activeAgentConfig.defaults?.model);
 
   const filteredToolGroups = useMemo(() => {
     const groups = toolsQuery.data?.groups ?? [];
-    const needle = deferredToolFilter.trim().toLowerCase();
-    if (!needle) return groups;
+    if (!deferredToolFilter) return groups;
     return groups
       .map((group) => ({
         ...group,
@@ -435,7 +714,7 @@ export function AgentsPage() {
             .filter(Boolean)
             .join(" ")
             .toLowerCase()
-            .includes(needle),
+            .includes(deferredToolFilter),
         ),
       }))
       .filter((group) => group.tools.length > 0);
@@ -443,22 +722,16 @@ export function AgentsPage() {
 
   const groupedSkills = useMemo(() => {
     const list = skillsQuery.data?.skills ?? [];
-    const needle = deferredSkillFilter.trim().toLowerCase();
-    const filtered = !needle
+    const filtered = !deferredSkillFilter
       ? list
       : list.filter((skill) =>
-          [skill.name, skill.description, skill.source, skill.skillKey]
-            .join(" ")
-            .toLowerCase()
-            .includes(needle),
+          [skill.name, skill.description, skill.source, skill.skillKey].join(" ").toLowerCase().includes(deferredSkillFilter),
         );
     return groupSkills(filtered);
   }, [deferredSkillFilter, skillsQuery.data]);
 
   const activeFileEntry =
-    (activeFileName
-      ? filesListQuery.data?.files.find((file) => file.name === activeFileName)
-      : null) ?? activeFileQuery.data;
+    (activeFileName ? filesListQuery.data?.files.find((file) => file.name === activeFileName) : null) ?? activeFileQuery.data;
   const activeFileDraft =
     (activeFileName ? fileDrafts[activeFileName] : undefined) ??
     activeFileQuery.data?.content ??
@@ -467,19 +740,18 @@ export function AgentsPage() {
     ? activeFileDraft !== (activeFileQuery.data?.content ?? "")
     : false;
 
-  function activateAgent(agentId: string) {
-    selectAgent(agentId);
-    selectSession(null);
-    setSelectedModel(null);
-    setActiveFileName(null);
-  }
+  const formDirty = JSON.stringify(agentForm) !== JSON.stringify(agentFormSeed);
+  const canSubmitAgentForm =
+    agentForm.name.trim().length > 0 &&
+    agentForm.workspace.trim().length > 0 &&
+    (editorMode === "create" || formDirty);
 
-  async function refreshCurrentView() {
+  const refreshCurrentView = async () => {
     setFeedback(null);
-    const actions: Array<Promise<unknown>> = [agentsQuery.refetch()];
+    const actions: Array<Promise<unknown>> = [agentsQuery.refetch(), configQuery.refetch()];
     if (activeAgent) {
-      actions.push(identityQuery.refetch(), toolsQuery.refetch(), skillsQuery.refetch());
-      if (panel === "overview" || panel === "files") {
+      actions.push(identityQuery.refetch(), toolsQuery.refetch(), skillsQuery.refetch(), modelsQuery.refetch());
+      if (panel === "overview" || panel === "files" || editorMode === "edit") {
         actions.push(filesListQuery.refetch());
       }
       if (panel === "files" && activeFileName) {
@@ -487,17 +759,138 @@ export function AgentsPage() {
       }
     }
     await Promise.all(actions);
-  }
+  };
 
-  async function refreshFiles() {
+  const refreshFiles = async () => {
     setFeedback(null);
     await Promise.all([
       filesListQuery.refetch(),
       activeFileName ? activeFileQuery.refetch() : Promise.resolve(null),
     ]);
-  }
+  };
 
-  async function saveActiveFile() {
+  const activateAgent = (agentId: string) => {
+    selectAgent(agentId);
+    selectSession(null);
+    setSelectedModel(null);
+    setActiveFileName(null);
+    setEditorMode(null);
+    setFeedback(null);
+  };
+
+  const openCreate = () => {
+    const nextForm = emptyAgentForm(defaultWorkspace);
+    setAgentForm(nextForm);
+    setAgentFormSeed(nextForm);
+    setEditorMode("create");
+    setPanel("overview");
+    setFeedback({
+      kind: "info",
+      message: "Create a new agent from the official workspace flow. Name and workspace are required.",
+    });
+  };
+
+  const openEdit = () => {
+    if (!activeAgent) return;
+    const nextForm = buildAgentFormSeed({
+      agent: activeAgent,
+      identity: activeIdentity,
+      config: configShape,
+      files: filesListQuery.data ?? null,
+    });
+    setAgentForm(nextForm);
+    setAgentFormSeed(nextForm);
+    setEditorMode("edit");
+    setPanel("overview");
+    setFeedback(null);
+  };
+
+  const cancelEditing = () => {
+    setEditorMode(null);
+    setFeedback(null);
+  };
+
+  const saveAgentForm = async () => {
+    if (!canSubmitAgentForm) return;
+    setSavingAgent(true);
+    setFeedback(null);
+
+    try {
+      if (editorMode === "create") {
+        const createResult = await gateway.request<{ agentId: string }>("agents.create", {
+          name: agentForm.name.trim(),
+          workspace: agentForm.workspace.trim(),
+          emoji: agentForm.emoji.trim() || undefined,
+          avatar: agentForm.avatar.trim() || undefined,
+        });
+
+        const nextAgentId = createResult.agentId;
+        if (agentForm.model.trim()) {
+          await gateway.request("agents.update", {
+            agentId: nextAgentId,
+            model: agentForm.model.trim(),
+          });
+        }
+
+        await Promise.all([agentsQuery.refetch(), configQuery.refetch()]);
+        selectAgent(nextAgentId);
+        selectSession(null);
+        setSelectedModel(null);
+        setEditorMode(null);
+        setFeedback({ kind: "success", message: `Created agent ${nextAgentId}.` });
+      } else if (editorMode === "edit" && activeAgent) {
+        await gateway.request("agents.update", {
+          agentId: activeAgent.id,
+          name: agentForm.name.trim(),
+          workspace: agentForm.workspace.trim(),
+          model: agentForm.model.trim() || undefined,
+          avatar: agentForm.avatar.trim(),
+        });
+
+        await Promise.all([
+          agentsQuery.refetch(),
+          configQuery.refetch(),
+          identityQuery.refetch(),
+          filesListQuery.refetch(),
+        ]);
+
+        setAgentFormSeed(agentForm);
+        setEditorMode(null);
+        setFeedback({ kind: "success", message: `Updated agent ${activeAgent.id}.` });
+      }
+    } catch (error) {
+      setFeedback({ kind: "error", message: String(error) });
+    } finally {
+      setSavingAgent(false);
+    }
+  };
+
+  const deleteAgent = async () => {
+    if (!activeAgent) return;
+    if (!window.confirm(`Delete agent "${activeAgent.id}"?`)) return;
+    const deleteFiles = window.confirm(
+      `Also move workspace, agent directory, and sessions for "${activeAgent.id}" to trash?\n\nOK = delete files, Cancel = keep files.`,
+    );
+
+    setFeedback(null);
+    try {
+      await gateway.request("agents.delete", { agentId: activeAgent.id, deleteFiles });
+      await Promise.all([agentsQuery.refetch(), configQuery.refetch()]);
+      selectSession(null);
+      setSelectedModel(null);
+      setEditorMode(null);
+      setFeedback({
+        kind: "success",
+        message: deleteFiles
+          ? `Deleted agent ${activeAgent.id} and removed related files.`
+          : `Deleted agent ${activeAgent.id} but kept files on disk.`,
+      });
+    } catch (error) {
+      setFeedback({ kind: "error", message: String(error) });
+    }
+  };
+
+  const saveActiveFile = async () => {
     if (!activeAgent || !activeFileName) return;
     setBusyFileName(activeFileName);
     setFeedback(null);
@@ -515,38 +908,92 @@ export function AgentsPage() {
     } finally {
       setBusyFileName(null);
     }
-  }
+  };
 
-  async function updateSkillEnabled(skillKey: string, enabled: boolean) {
-    setBusySkillKey(skillKey);
+  const updateSkillEnabled = async (skill: SkillStatusEntry, enabled: boolean) => {
+    setBusySkill({ key: skill.skillKey, action: "toggle" });
     setFeedback(null);
     try {
-      await gateway.request("skills.update", { skillKey, enabled });
-      await skillsQuery.refetch();
+      await gateway.request("skills.update", { skillKey: skill.skillKey, enabled });
+      await Promise.all([skillsQuery.refetch(), configQuery.refetch()]);
       setFeedback({
         kind: "success",
-        message: enabled ? `Enabled ${skillKey}.` : `Disabled ${skillKey}.`,
+        message: enabled ? `Enabled ${skill.skillKey}.` : `Disabled ${skill.skillKey}.`,
       });
     } catch (error) {
       setFeedback({ kind: "error", message: String(error) });
     } finally {
-      setBusySkillKey(null);
+      setBusySkill(null);
     }
-  }
+  };
 
-  function openInChat() {
+  const installSkill = async (skill: SkillStatusEntry) => {
+    const installTarget = skill.install[0];
+    if (!installTarget) return;
+    setBusySkill({ key: skill.skillKey, action: "install" });
+    setFeedback(null);
+    try {
+      const result = await gateway.request<{ message?: string }>("skills.install", {
+        name: skill.name,
+        installId: installTarget.id,
+        timeoutMs: 120_000,
+      });
+      await Promise.all([skillsQuery.refetch(), configQuery.refetch()]);
+      setFeedback({
+        kind: "success",
+        message: result.message ?? `Installed requirements for ${skill.name}.`,
+      });
+    } catch (error) {
+      setFeedback({ kind: "error", message: String(error) });
+    } finally {
+      setBusySkill(null);
+    }
+  };
+
+  const saveSkillApiKey = async (skill: SkillStatusEntry, apiKey: string) => {
+    setBusySkill({ key: skill.skillKey, action: "apiKey" });
+    setFeedback(null);
+    try {
+      await gateway.request("skills.update", { skillKey: skill.skillKey, apiKey });
+      await Promise.all([skillsQuery.refetch(), configQuery.refetch()]);
+      setFeedback({
+        kind: "success",
+        message: apiKey.trim() ? `Saved API key for ${skill.skillKey}.` : `Cleared API key for ${skill.skillKey}.`,
+      });
+    } catch (error) {
+      setFeedback({ kind: "error", message: String(error) });
+    } finally {
+      setBusySkill(null);
+    }
+  };
+
+  const saveSkillEnv = async (skill: SkillStatusEntry, env: Record<string, string>) => {
+    setBusySkill({ key: skill.skillKey, action: "env" });
+    setFeedback(null);
+    try {
+      await gateway.request("skills.update", { skillKey: skill.skillKey, env });
+      await Promise.all([skillsQuery.refetch(), configQuery.refetch()]);
+      setFeedback({ kind: "success", message: `Saved environment overrides for ${skill.skillKey}.` });
+    } catch (error) {
+      setFeedback({ kind: "error", message: String(error) });
+    } finally {
+      setBusySkill(null);
+    }
+  };
+
+  const openInChat = () => {
     if (!activeAgent) return;
     selectAgent(activeAgent.id);
     selectSession(null);
     navigate("/chat");
-  }
+  };
 
   if (!isConnected) {
     return (
       <div className="workspace-empty-state agents-page agents-page--empty">
         <Bot size={40} className="text-text-tertiary" />
         <h2 className="workspace-title">Agents</h2>
-        <p className="workspace-subtitle">Connect a gateway to inspect and align agent workspaces.</p>
+        <p className="workspace-subtitle">Connect a gateway to inspect, create, edit, and manage agents.</p>
       </div>
     );
   }
@@ -557,15 +1004,19 @@ export function AgentsPage() {
         <div>
           <h2 className="workspace-title">Agents</h2>
           <p className="workspace-subtitle">
-            Official-style agent workspace with overview, files, tools, and skills panels.
+            Official-style agent workspace with list management, config editing, files, tools, and skills panels.
           </p>
         </div>
         <div className="workspace-toolbar__actions">
-          <Button variant="secondary" onClick={refreshCurrentView} loading={agentsQuery.isFetching}>
+          <Button variant="secondary" onClick={refreshCurrentView} loading={agentsQuery.isFetching || configQuery.isFetching}>
             <RefreshCw size={14} />
             Refresh
           </Button>
-          <Button onClick={openInChat} disabled={!activeAgent}>
+          <Button variant="secondary" onClick={openCreate}>
+            <FolderPlus size={14} />
+            New Agent
+          </Button>
+          <Button onClick={openInChat} disabled={!activeAgent || editorMode === "create"}>
             Open Chat
             <ArrowRight size={14} />
           </Button>
@@ -573,57 +1024,88 @@ export function AgentsPage() {
       </div>
 
       {feedback && (
-        <div
-          className={`workspace-alert ${
-            feedback.kind === "error" ? "workspace-alert--error" : "workspace-alert--info"
-          }`}
-        >
+        <div className={`workspace-alert ${
+          feedback.kind === "error"
+            ? "workspace-alert--error"
+            : "workspace-alert--info"
+        }`}>
           {feedback.message}
         </div>
       )}
-      {agentsQuery.error && (
-        <div className="workspace-alert workspace-alert--error">{String(agentsQuery.error)}</div>
+
+      {configQuery.data?.valid === false && (
+        <div className="workspace-alert workspace-alert--error">
+          Gateway config currently reports validation issues{configQuery.data.issues.length > 0 ? ` (${configQuery.data.issues.length})` : ""}. Agent edits may be partially constrained until the config is fixed.
+        </div>
       )}
 
       <div className="agents-shell">
         <Card className="agents-sidebar" padding={false}>
           <div className="agents-sidebar__header">
             <div>
-              <h3>Configured Agents</h3>
-              <p>{agents.length} loaded from `agents.list`.</p>
+              <h3>Agents</h3>
+              <p>{agents.length} configured from `agents.list`.</p>
             </div>
-            <StatusBadge status="connected" label={defaultId ? `default:${defaultId}` : "connected"} />
+            <StatusBadge
+              status={agentsQuery.error ? "error" : "connected"}
+              label={agentsQuery.error ? "Error" : `${visibleAgents.length} shown`}
+            />
           </div>
 
-          {agentsQuery.isLoading ? (
+          <div className="agents-sidebar__controls">
+            <label className="agents-search">
+              <Search size={14} />
+              <input
+                value={listFilter}
+                onChange={(event) => setListFilter(event.target.value)}
+                placeholder="Filter by id, name, description"
+              />
+            </label>
+            <select
+              className="agents-select"
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value as AgentSort)}
+              aria-label="Sort agents"
+            >
+              <option value="default">Default first</option>
+              <option value="name">Name</option>
+              <option value="id">ID</option>
+              <option value="status">Status</option>
+            </select>
+          </div>
+
+          {agentsQuery.error ? (
+            <div className="workspace-alert workspace-alert--error agents-sidebar__state">{String(agentsQuery.error)}</div>
+          ) : agentsQuery.isLoading ? (
             <div className="workspace-inline-status agents-sidebar__state">Loading agents…</div>
-          ) : agents.length === 0 ? (
-            <div className="workspace-empty-inline agents-sidebar__state">No agents were returned from `agents.list`.</div>
+          ) : visibleAgents.length === 0 ? (
+            <div className="workspace-empty-inline agents-sidebar__state">
+              {listFilter.trim() ? "No agents matched the current filter." : "No agents were returned from `agents.list`."}
+            </div>
           ) : (
             <div className="agents-list">
-              {agents.map((agent) => {
-                const active = agent.id === activeAgent?.id;
-                const badge = agent.id === defaultId ? "default" : null;
+              {visibleAgents.map((agent) => {
+                const selected = activeAgent?.id === agent.id;
+                const displayName = resolveAgentDisplayName(agent, selected ? activeIdentity : null);
+                const emoji = resolveAgentAvatar(agent, selected ? activeIdentity : null);
+                const resolvedConfig = resolveAgentConfig(configShape, agent.id);
+                const workspace = resolvedConfig.entry?.workspace || resolvedConfig.defaults?.workspace || "workspace pending";
                 return (
                   <button
                     type="button"
                     key={agent.id}
-                    className={`agents-list__row ${active ? "active" : ""}`}
+                    className={`agents-list__row ${selected ? "active" : ""}`}
                     onClick={() => activateAgent(agent.id)}
                   >
-                    <div className="agents-list__avatar">
-                      {resolveAgentAvatar(
-                        agent,
-                        active ? activeIdentity : agent.id === activeAgent?.id ? activeIdentity : null,
-                      )}
-                    </div>
+                    <div className="agents-list__avatar">{emoji}</div>
                     <div className="agents-list__meta">
-                      <div className="agents-list__title">{resolveAgentDisplayName(agent)}</div>
+                      <div className="agents-list__title">{displayName}</div>
                       <div className="workspace-subcopy mono">{agent.id}</div>
+                      <div className="workspace-subcopy mono">{truncate(workspace, 28)}</div>
                     </div>
                     <div className="agents-list__status">
-                      {badge && <span className="detail-pill">{badge}</span>}
-                      <StatusBadge status={agent.status} />
+                      <StatusBadge status={agent.status} label={agent.status} />
+                      {agent.id === defaultId && <span className="detail-pill">default</span>}
                     </div>
                   </button>
                 );
@@ -633,17 +1115,92 @@ export function AgentsPage() {
         </Card>
 
         <div className="agents-main">
+          {editorMode === "create" && (
+            <Card className="workspace-section agents-editor-card">
+              <div className="workspace-section__header compact">
+                <div>
+                  <h4>Create Agent</h4>
+                  <p>Add a new entry through `agents.create`, then optionally apply model overrides.</p>
+                </div>
+                <Sparkles size={16} className="text-text-tertiary" />
+              </div>
+
+              <div className="agents-form">
+                <label className="agents-field">
+                  <span>Name</span>
+                  <input
+                    className="agents-input"
+                    value={agentForm.name}
+                    onChange={(event) => setAgentForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Research Assistant"
+                  />
+                </label>
+                <label className="agents-field">
+                  <span>Workspace</span>
+                  <input
+                    className="agents-input mono"
+                    value={agentForm.workspace}
+                    onChange={(event) => setAgentForm((current) => ({ ...current, workspace: event.target.value }))}
+                    placeholder="~/openclaw/agents/research"
+                  />
+                </label>
+                <label className="agents-field">
+                  <span>Model</span>
+                  <input
+                    className="agents-input mono"
+                    value={agentForm.model}
+                    onChange={(event) => setAgentForm((current) => ({ ...current, model: event.target.value }))}
+                    list="agents-model-list"
+                    placeholder="openai/gpt-5"
+                  />
+                </label>
+                <label className="agents-field">
+                  <span>Avatar</span>
+                  <input
+                    className="agents-input"
+                    value={agentForm.avatar}
+                    onChange={(event) => setAgentForm((current) => ({ ...current, avatar: event.target.value }))}
+                    placeholder="🤖 or avatar label"
+                  />
+                </label>
+                <label className="agents-field">
+                  <span>Emoji</span>
+                  <input
+                    className="agents-input"
+                    value={agentForm.emoji}
+                    onChange={(event) => setAgentForm((current) => ({ ...current, emoji: event.target.value }))}
+                    placeholder="🧠"
+                  />
+                </label>
+                <div className="agents-field agents-field--wide">
+                  <div className="agents-form__hint">
+                    `agents.create` supports `name`, `workspace`, `emoji`, and `avatar`. If a model is supplied here, the page applies it in a second `agents.update` call.
+                  </div>
+                </div>
+                <div className="agents-form__actions agents-field agents-field--wide">
+                  <Button variant="ghost" onClick={cancelEditing}>Cancel</Button>
+                  <Button onClick={saveAgentForm} loading={savingAgent} disabled={!canSubmitAgentForm}>Create Agent</Button>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {!activeAgent ? (
             <Card className="workspace-section">
-              <div className="workspace-empty-inline">Select an agent to inspect its workspace and tools.</div>
+              <div className="workspace-empty-inline">
+                <div className="agents-empty-block">
+                  <Bot size={24} />
+                  <strong>No agent selected</strong>
+                  <span>Create a new agent or choose one from the sidebar to inspect files, tools, and skills.</span>
+                  <Button size="sm" onClick={openCreate}>Create Agent</Button>
+                </div>
+              </div>
             </Card>
           ) : (
             <>
               <section className="agents-hero">
                 <div className="agents-hero__identity">
-                  <div className="agents-hero__avatar">
-                    {resolveAgentAvatar(activeAgent, activeIdentity)}
-                  </div>
+                  <div className="agents-hero__avatar">{resolveAgentAvatar(activeAgent, activeIdentity)}</div>
                   <div className="agents-hero__copy">
                     <div className="agents-hero__title-row">
                       <h3>{resolveAgentDisplayName(activeAgent, activeIdentity)}</h3>
@@ -652,16 +1209,30 @@ export function AgentsPage() {
                     </div>
                     <p>
                       {activeAgent.description ||
-                        "No explicit description reported by the gateway for this agent."}
+                        "No explicit description reported by the gateway for this agent. Use the config panel below to update its display name, workspace, model, and avatar."}
                     </p>
                     <div className="agents-hero__meta mono">{activeAgent.id}</div>
+                    <div className="agents-hero__actions">
+                      <Button variant="secondary" size="sm" onClick={openEdit}>
+                        <PencilLine size={14} />
+                        Edit
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={deleteAgent} disabled={activeAgent.id === defaultId}>
+                        <Trash2 size={14} />
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
                 <div className="agents-hero__stats">
                   <div className="agents-stat">
                     <span>Workspace</span>
-                    <strong>{workspacePath ? truncate(workspacePath, 30) : "Pending"}</strong>
+                    <strong>{workspacePath ? truncate(workspacePath, 32) : "Pending"}</strong>
+                  </div>
+                  <div className="agents-stat">
+                    <span>Model</span>
+                    <strong>{truncate(modelLabel, 28)}</strong>
                   </div>
                   <div className="agents-stat">
                     <span>Tools</span>
@@ -669,11 +1240,7 @@ export function AgentsPage() {
                   </div>
                   <div className="agents-stat">
                     <span>Skills</span>
-                    <strong>{skillsCount}</strong>
-                  </div>
-                  <div className="agents-stat">
-                    <span>Eligible</span>
-                    <strong>{eligibleSkillsCount}</strong>
+                    <strong>{eligibleSkillsCount}/{skillsCount}</strong>
                   </div>
                 </div>
               </section>
@@ -714,38 +1281,135 @@ export function AgentsPage() {
                     <Card className="workspace-section">
                       <div className="workspace-section__header compact">
                         <div>
-                          <h4>Agent Context</h4>
-                          <p>Workspace and identity details resolved for this agent.</p>
+                          <h4>{editorMode === "edit" ? "Edit Agent" : "Agent Config"}</h4>
+                          <p>
+                            {editorMode === "edit"
+                              ? "Update this agent through `agents.update`."
+                              : "Name, workspace, model, and avatar aligned with the gateway config."}
+                          </p>
                         </div>
                         <Sparkles size={16} className="text-text-tertiary" />
                       </div>
-                      <div className="agents-kv-grid">
-                        <div className="agents-kv">
-                          <span>Identity</span>
-                          <strong>{resolveAgentDisplayName(activeAgent, activeIdentity)}</strong>
+
+                      {editorMode === "edit" ? (
+                        <div className="agents-form">
+                          <label className="agents-field">
+                            <span>Name</span>
+                            <input
+                              className="agents-input"
+                              value={agentForm.name}
+                              onChange={(event) => setAgentForm((current) => ({ ...current, name: event.target.value }))}
+                              placeholder="Agent name"
+                            />
+                          </label>
+                          <label className="agents-field">
+                            <span>Workspace</span>
+                            <input
+                              className="agents-input mono"
+                              value={agentForm.workspace}
+                              onChange={(event) => setAgentForm((current) => ({ ...current, workspace: event.target.value }))}
+                              placeholder="~/openclaw/agents/..."
+                            />
+                          </label>
+                          <label className="agents-field">
+                            <span>Model</span>
+                            <input
+                              className="agents-input mono"
+                              value={agentForm.model}
+                              onChange={(event) => setAgentForm((current) => ({ ...current, model: event.target.value }))}
+                              list="agents-model-list"
+                              placeholder="Model override"
+                            />
+                          </label>
+                          <label className="agents-field">
+                            <span>Avatar</span>
+                            <input
+                              className="agents-input"
+                              value={agentForm.avatar}
+                              onChange={(event) => setAgentForm((current) => ({ ...current, avatar: event.target.value }))}
+                              placeholder="Avatar or emoji"
+                            />
+                          </label>
+                          <label className="agents-field">
+                            <span>Emoji</span>
+                            <input
+                              className="agents-input"
+                              value={agentForm.emoji}
+                              disabled
+                              placeholder="Edit IDENTITY.md to change emoji"
+                            />
+                          </label>
+                          <div className="agents-field agents-field--wide">
+                            <div className="agents-form__hint">
+                              Emoji changes are not exposed by `agents.update`; use the Files panel to edit `IDENTITY.md` when you need to update it.
+                            </div>
+                          </div>
+                          <div className="agents-form__actions agents-field agents-field--wide">
+                            <Button variant="ghost" onClick={cancelEditing}>Cancel</Button>
+                            <Button onClick={saveAgentForm} loading={savingAgent} disabled={!canSubmitAgentForm}>Save Changes</Button>
+                          </div>
                         </div>
-                        <div className="agents-kv">
-                          <span>Emoji / Avatar</span>
-                          <strong>{resolveAgentAvatar(activeAgent, activeIdentity)}</strong>
+                      ) : (
+                        <div className="agents-kv-grid">
+                          <div className="agents-kv">
+                            <span>Identity</span>
+                            <strong>{resolveAgentDisplayName(activeAgent, activeIdentity)}</strong>
+                          </div>
+                          <div className="agents-kv">
+                            <span>Avatar</span>
+                            <strong>{resolveAgentAvatar(activeAgent, activeIdentity)}</strong>
+                          </div>
+                          <div className="agents-kv">
+                            <span>Workspace</span>
+                            <strong className="mono">{workspacePath}</strong>
+                          </div>
+                          <div className="agents-kv">
+                            <span>Model</span>
+                            <strong className="mono">{modelLabel}</strong>
+                          </div>
                         </div>
-                        <div className="agents-kv">
-                          <span>Workspace</span>
-                          <strong className="mono">{workspacePath || "Load files to resolve"}</strong>
-                        </div>
-                        <div className="agents-kv">
-                          <span>Managed Skills</span>
-                          <strong className="mono">
-                            {skillsQuery.data?.managedSkillsDir || "No managed skills dir"}
-                          </strong>
-                        </div>
-                      </div>
+                      )}
                     </Card>
 
                     <Card className="workspace-section">
                       <div className="workspace-section__header compact">
                         <div>
+                          <h4>Status & Policy</h4>
+                          <p>Gateway-reported runtime status, defaults, and capability metadata.</p>
+                        </div>
+                        <Wrench size={16} className="text-text-tertiary" />
+                      </div>
+                      <div className="agents-kv-grid">
+                        <div className="agents-kv">
+                          <span>Status</span>
+                          <strong>{activeAgent.status}</strong>
+                        </div>
+                        <div className="agents-kv">
+                          <span>Default Agent</span>
+                          <strong>{activeAgent.id === defaultId ? "Yes" : "No"}</strong>
+                        </div>
+                        <div className="agents-kv">
+                          <span>Eligible Skills</span>
+                          <strong>{eligibleSkillsCount}</strong>
+                        </div>
+                        <div className="agents-kv">
+                          <span>Blocked Skills</span>
+                          <strong>{blockedSkillsCount}</strong>
+                        </div>
+                      </div>
+                      <div className="agents-banner agents-banner--info">
+                        <TriangleAlert size={14} />
+                        <span>Current gateway RPCs expose agent runtime status, but do not expose dedicated `agents.start` / `agents.stop` lifecycle calls.</span>
+                      </div>
+                    </Card>
+                  </div>
+
+                  <div className="agents-overview-grid">
+                    <Card className="workspace-section">
+                      <div className="workspace-section__header compact">
+                        <div>
                           <h4>Files Snapshot</h4>
-                          <p>Official module parity starts with the core workspace files.</p>
+                          <p>Browse and edit core workspace files without leaving the page.</p>
                         </div>
                         <FileCode2 size={16} className="text-text-tertiary" />
                       </div>
@@ -753,54 +1417,65 @@ export function AgentsPage() {
                         <div className="workspace-inline-status">Loading file list…</div>
                       ) : filesListQuery.data && filesListQuery.data.files.length > 0 ? (
                         <div className="agents-mini-list">
-                          {filesListQuery.data.files.slice(0, 4).map((file) => (
-                            <div key={file.name} className="agents-mini-list__row">
+                          {filesListQuery.data.files.slice(0, 5).map((file) => (
+                            <button
+                              type="button"
+                              key={file.name}
+                              className="agents-mini-list__row agents-mini-list__action"
+                              onClick={() => {
+                                setPanel("files");
+                                setActiveFileName(file.name);
+                              }}
+                            >
                               <div>
                                 <div className="tool-item__title mono">{file.name}</div>
-                                <div className="workspace-subcopy mono">{truncate(file.path, 52)}</div>
+                                <div className="workspace-subcopy mono">{truncate(file.path, 54)}</div>
                               </div>
-                              <div className="workspace-subcopy">
-                                {file.missing
-                                  ? "missing"
-                                  : file.updatedAtMs
-                                    ? formatRelativeTime(file.updatedAtMs)
-                                    : formatBytes(file.size)}
-                              </div>
-                            </div>
+                              <span className={`detail-pill ${file.missing ? "detail-pill--warn" : "detail-pill--soft"}`}>
+                                {file.missing ? "missing" : formatBytes(file.size)}
+                              </span>
+                            </button>
                           ))}
                         </div>
                       ) : (
-                        <div className="workspace-empty-inline">No workspace files loaded yet.</div>
+                        <div className="workspace-empty-inline">No bootstrap files were reported for this agent.</div>
+                      )}
+                    </Card>
+
+                    <Card className="workspace-section">
+                      <div className="workspace-section__header compact">
+                        <div>
+                          <h4>Skills Snapshot</h4>
+                          <p>Agent-scoped skill eligibility, install hints, and configuration readiness.</p>
+                        </div>
+                        <KeyRound size={16} className="text-text-tertiary" />
+                      </div>
+                      {skillsQuery.isLoading ? (
+                        <div className="workspace-inline-status">Loading skills…</div>
+                      ) : skillsQuery.data && skillsQuery.data.skills.length > 0 ? (
+                        <div className="agents-checklist">
+                          <div className="agents-checklist__row">
+                            <span className="detail-pill detail-pill--ok">eligible</span>
+                            <span>{eligibleSkillsCount} skills are currently eligible for this agent.</span>
+                          </div>
+                          <div className="agents-checklist__row">
+                            <span className="detail-pill detail-pill--warn">blocked</span>
+                            <span>{blockedSkillsCount} skills are blocked, disabled, or missing requirements.</span>
+                          </div>
+                          <div className="agents-checklist__row">
+                            <span className="detail-pill">workspace</span>
+                            <span className="mono">{skillsQuery.data.workspaceDir || "No workspace reported"}</span>
+                          </div>
+                          <div className="agents-checklist__row">
+                            <span className="detail-pill">managed</span>
+                            <span className="mono">{skillsQuery.data.managedSkillsDir || "No managed skills dir"}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="workspace-empty-inline">No skill metadata was returned for this agent.</div>
                       )}
                     </Card>
                   </div>
-
-                  <Card className="workspace-section">
-                    <div className="workspace-section__header">
-                      <div>
-                        <h3>Panel Alignment Summary</h3>
-                        <p>Current parity between desktop Agents and the upstream official module.</p>
-                      </div>
-                    </div>
-                    <div className="agents-checklist">
-                      <div className="agents-checklist__row">
-                        <span className="detail-pill">overview</span>
-                        <span>Identity, workspace snapshot, tools count, and skills count are available.</span>
-                      </div>
-                      <div className="agents-checklist__row">
-                        <span className="detail-pill">files</span>
-                        <span>Workspace file list, file loading, editing, and save flow are wired to `agents.files.*`.</span>
-                      </div>
-                      <div className="agents-checklist__row">
-                        <span className="detail-pill">tools</span>
-                        <span>Runtime tool catalog, grouped rendering, and search are aligned with the upstream structure.</span>
-                      </div>
-                      <div className="agents-checklist__row">
-                        <span className="detail-pill">skills</span>
-                        <span>Agent-scoped skill report, grouped rendering, and enable/disable are available.</span>
-                      </div>
-                    </div>
-                  </Card>
                 </div>
               )}
 
@@ -820,9 +1495,7 @@ export function AgentsPage() {
                   </div>
 
                   {filesListQuery.error && (
-                    <div className="workspace-alert workspace-alert--error agents-panel__alert">
-                      {String(filesListQuery.error)}
-                    </div>
+                    <div className="workspace-alert workspace-alert--error agents-panel__alert">{String(filesListQuery.error)}</div>
                   )}
 
                   {!filesListQuery.data ? (
@@ -899,13 +1572,9 @@ export function AgentsPage() {
 
                             {activeFileQuery.isLoading ? (
                               <div className="workspace-inline-status">Loading file content…</div>
-                            ) : activeFileQuery.error ? (
-                              <div className="workspace-alert workspace-alert--error">
-                                {String(activeFileQuery.error)}
-                              </div>
                             ) : (
                               <textarea
-                                className="agents-file-editor__textarea mono"
+                                className="agents-file-editor__textarea"
                                 value={activeFileDraft}
                                 onChange={(event) =>
                                   setFileDrafts((current) => ({
@@ -928,8 +1597,8 @@ export function AgentsPage() {
                 <Card className="workspace-section agents-panel">
                   <div className="workspace-section__header">
                     <div>
-                      <h3>Tool Access</h3>
-                      <p>{toolsCount} tools currently visible for this agent.</p>
+                      <h3>Tool Catalog</h3>
+                      <p>Runtime tool catalog grouped to match the official WebUI structure.</p>
                     </div>
                     <div className="workspace-toolbar__actions">
                       <label className="agents-search">
@@ -940,41 +1609,47 @@ export function AgentsPage() {
                           placeholder="Filter by tool, plugin, or profile"
                         />
                       </label>
+                      <Button variant="secondary" size="sm" onClick={() => toolsQuery.refetch()} loading={toolsQuery.isFetching}>
+                        <RefreshCw size={14} />
+                        Refresh
+                      </Button>
                     </div>
                   </div>
 
-                  {toolsQuery.error && (
-                    <div className="workspace-alert workspace-alert--error">{String(toolsQuery.error)}</div>
-                  )}
+                  {toolsQuery.error && <div className="workspace-alert workspace-alert--error">{String(toolsQuery.error)}</div>}
+
+                  <div className="agents-banner agents-banner--info">
+                    <TriangleAlert size={14} />
+                    <span>Gateway tool policy is currently reported as catalog + profiles. Dedicated per-agent tool override mutations are not exposed in this desktop client.</span>
+                  </div>
 
                   {toolsQuery.isLoading ? (
-                    <div className="workspace-inline-status">Loading tool catalog…</div>
+                    <div className="workspace-inline-status">Loading runtime tool catalog…</div>
                   ) : filteredToolGroups.length > 0 ? (
                     <div className="agents-tool-groups">
                       {filteredToolGroups.map((group) => (
-                        <section key={group.id} className="tool-group agents-tool-group">
+                        <section key={group.id} className="agents-tool-group tool-group">
                           <div className="tool-group__header">
                             <div>
                               <strong>{group.label}</strong>
                               <div className="workspace-subcopy">
-                                {group.source}
+                                {group.tools.length} tools · {group.source}
                                 {group.pluginId ? ` · ${group.pluginId}` : ""}
                               </div>
                             </div>
-                            <span className="detail-pill">{group.tools.length} tools</span>
                           </div>
 
                           <div className="tool-group__items agents-tool-group__items">
                             {group.tools.map((tool) => (
-                              <div key={tool.id} className="tool-item agents-tool-card">
+                              <article key={tool.id} className="agents-tool-card">
                                 <div className="tool-item__title">{tool.label}</div>
                                 <div className="workspace-subcopy mono">{tool.id}</div>
                                 <div className="agents-tool-card__description">
-                                  {tool.description || "No description reported by the gateway."}
+                                  {tool.description || "No description was reported for this tool."}
                                 </div>
                                 <div className="detail-pills">
                                   <span className="detail-pill">{tool.source}</span>
-                                  {tool.pluginId && <span className="detail-pill">plugin:{tool.pluginId}</span>}
+                                  {tool.pluginId && <span className="detail-pill detail-pill--soft">plugin:{tool.pluginId}</span>}
                                   {tool.optional && <span className="detail-pill detail-pill--soft">optional</span>}
                                   {tool.defaultProfiles.map((profile) => (
                                     <span key={`${tool.id}-${profile}`} className="detail-pill detail-pill--soft">
@@ -982,7 +1657,7 @@ export function AgentsPage() {
                                     </span>
                                   ))}
                                 </div>
-                              </div>
+                              </article>
                             ))}
                           </div>
                         </section>
@@ -1017,9 +1692,23 @@ export function AgentsPage() {
                     </div>
                   </div>
 
-                  {skillsQuery.error && (
-                    <div className="workspace-alert workspace-alert--error">{String(skillsQuery.error)}</div>
-                  )}
+                  {skillsQuery.error && <div className="workspace-alert workspace-alert--error">{String(skillsQuery.error)}</div>}
+
+                  <div className="agents-banner agents-banner--info">
+                    <TriangleAlert size={14} />
+                    <span>`skills.install` and `skills.update` are available here. Dedicated uninstall RPCs are not exposed by the current gateway, so disabling a skill is the closest supported fallback.</span>
+                  </div>
+
+                  <div className="agents-skill-meta">
+                    <div className="agents-kv">
+                      <span>Workspace</span>
+                      <strong className="mono">{skillsQuery.data?.workspaceDir || "-"}</strong>
+                    </div>
+                    <div className="agents-kv">
+                      <span>Managed Skills</span>
+                      <strong className="mono">{skillsQuery.data?.managedSkillsDir || "-"}</strong>
+                    </div>
+                  </div>
 
                   {skillsQuery.isLoading ? (
                     <div className="workspace-inline-status">Loading skills…</div>
@@ -1039,6 +1728,15 @@ export function AgentsPage() {
                               const missing = computeSkillMissing(skill);
                               const reasons = computeSkillReasons(skill);
                               const toggledOff = skill.disabled;
+                              const skillConfig = resolveSkillConfig(configShape, skill.skillKey);
+                              const envNames = uniqueStrings([
+                                ...skill.requirements.env.filter((name) => name !== skill.primaryEnv),
+                                ...Object.keys(skillConfig?.env ?? {}).filter((name) => name !== skill.primaryEnv),
+                              ]);
+                              const apiKeyValue = skillApiKeyDrafts[skill.skillKey] ?? skillConfig?.apiKey ?? "";
+                              const envValue = skillEnvDrafts[skill.skillKey] ?? skillConfig?.env ?? {};
+                              const installLabel = skill.install[0]?.label ?? null;
+
                               return (
                                 <div key={skill.skillKey} className="tool-item agents-skill-card">
                                   <div className="agents-skill-card__header">
@@ -1049,15 +1747,28 @@ export function AgentsPage() {
                                       </div>
                                       <div className="workspace-subcopy mono">{skill.skillKey}</div>
                                     </div>
-                                    <Button
-                                      size="sm"
-                                      variant={toggledOff ? "primary" : "secondary"}
-                                      onClick={() => updateSkillEnabled(skill.skillKey, toggledOff)}
-                                      loading={busySkillKey === skill.skillKey}
-                                      disabled={skill.always}
-                                    >
-                                      {toggledOff ? "Enable" : "Disable"}
-                                    </Button>
+                                    <div className="agents-skill-actions">
+                                      {installLabel && (
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          onClick={() => installSkill(skill)}
+                                          loading={busySkill?.key === skill.skillKey && busySkill.action === "install"}
+                                        >
+                                          <PackagePlus size={14} />
+                                          Install
+                                        </Button>
+                                      )}
+                                      <Button
+                                        size="sm"
+                                        variant={toggledOff ? "primary" : "secondary"}
+                                        onClick={() => updateSkillEnabled(skill, toggledOff)}
+                                        loading={busySkill?.key === skill.skillKey && busySkill.action === "toggle"}
+                                        disabled={skill.always}
+                                      >
+                                        {toggledOff ? "Enable" : "Disable"}
+                                      </Button>
+                                    </div>
                                   </div>
 
                                   <div className="agents-tool-card__description">
@@ -1072,13 +1783,79 @@ export function AgentsPage() {
                                     {skill.bundled && <span className="detail-pill detail-pill--soft">bundled</span>}
                                     {skill.disabled && <span className="detail-pill detail-pill--warn">disabled</span>}
                                     {skill.always && <span className="detail-pill">always</span>}
+                                    {skill.primaryEnv && <span className="detail-pill detail-pill--soft">env:{skill.primaryEnv}</span>}
                                   </div>
 
-                                  {missing.length > 0 && (
-                                    <div className="workspace-subcopy">Missing: {missing.join(", ")}</div>
+                                  {installLabel && (
+                                    <div className="workspace-subcopy">Suggested install: {installLabel}</div>
                                   )}
-                                  {reasons.length > 0 && (
-                                    <div className="workspace-subcopy">Reason: {reasons.join(", ")}</div>
+                                  {missing.length > 0 && <div className="workspace-subcopy">Missing: {missing.join(", ")}</div>}
+                                  {reasons.length > 0 && <div className="workspace-subcopy">Reason: {reasons.join(", ")}</div>}
+
+                                  {(skill.primaryEnv || envNames.length > 0) && (
+                                    <div className="agents-skill-config">
+                                      {skill.primaryEnv && (
+                                        <div className="agents-skill-config__row">
+                                          <label className="agents-field agents-field--wide">
+                                            <span>API Key ({skill.primaryEnv})</span>
+                                            <input
+                                              className="agents-input mono"
+                                              value={apiKeyValue}
+                                              onChange={(event) =>
+                                                setSkillApiKeyDrafts((current) => ({
+                                                  ...current,
+                                                  [skill.skillKey]: event.target.value,
+                                                }))
+                                              }
+                                              placeholder={`Set ${skill.primaryEnv}`}
+                                            />
+                                          </label>
+                                          <Button
+                                            size="sm"
+                                            onClick={() => saveSkillApiKey(skill, apiKeyValue)}
+                                            loading={busySkill?.key === skill.skillKey && busySkill.action === "apiKey"}
+                                          >
+                                            Save Key
+                                          </Button>
+                                        </div>
+                                      )}
+
+                                      {envNames.length > 0 && (
+                                        <>
+                                          <div className="agents-env-grid">
+                                            {envNames.map((envName) => (
+                                              <label key={envName} className="agents-field">
+                                                <span>{envName}</span>
+                                                <input
+                                                  className="agents-input mono"
+                                                  value={envValue[envName] ?? ""}
+                                                  onChange={(event) =>
+                                                    setSkillEnvDrafts((current) => ({
+                                                      ...current,
+                                                      [skill.skillKey]: {
+                                                        ...(current[skill.skillKey] ?? skillConfig?.env ?? {}),
+                                                        [envName]: event.target.value,
+                                                      },
+                                                    }))
+                                                  }
+                                                  placeholder={`Override ${envName}`}
+                                                />
+                                              </label>
+                                            ))}
+                                          </div>
+                                          <div className="agents-inline-actions">
+                                            <Button
+                                              size="sm"
+                                              variant="secondary"
+                                              onClick={() => saveSkillEnv(skill, envValue)}
+                                              loading={busySkill?.key === skill.skillKey && busySkill.action === "env"}
+                                            >
+                                              Save Env Overrides
+                                            </Button>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               );
@@ -1096,6 +1873,14 @@ export function AgentsPage() {
           )}
         </div>
       </div>
+
+      <datalist id="agents-model-list">
+        {(modelsQuery.data ?? []).map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.label}
+          </option>
+        ))}
+      </datalist>
     </div>
   );
 }
