@@ -687,7 +687,7 @@
 
 @container agents-page (max-width: 860px) {
   .agents-page {
-    padding: 16px;
+    padding: var(--control-page-padding);
   }
 
   .agents-page .workspace-toolbar,
@@ -703,6 +703,15 @@
 
   .agents-page .workspace-toolbar__actions {
     justify-content: flex-start;
+  }
+
+  .agents-page .workspace-toolbar__actions > *,
+  .agents-hero__actions > *,
+  .agents-inline-actions > *,
+  .agents-skill-actions > *,
+  .agents-form__actions > * {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
   }
 
   .agents-hero__identity {
@@ -749,7 +758,7 @@
 
 @container agents-page (max-width: 640px) {
   .agents-page {
-    padding: 14px;
+    padding: var(--control-page-padding);
   }
 
   .agents-hero__stats,
@@ -765,6 +774,14 @@
 
   .agents-tabs__tab {
     flex: 1 1 100%;
+  }
+
+  .agents-page .workspace-toolbar__actions > *,
+  .agents-hero__actions > *,
+  .agents-inline-actions > *,
+  .agents-skill-actions > *,
+  .agents-form__actions > * {
+    flex-basis: 100%;
   }
 }
 
@@ -976,5 +993,4 @@
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
     var(--control-focus-ring);
 }
-
 

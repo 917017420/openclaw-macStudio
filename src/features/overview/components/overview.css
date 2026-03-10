@@ -988,8 +988,8 @@
 
 @media (max-width: 840px) {
   .overview-page {
-    padding: 8px;
-    gap: 14px;
+    padding: var(--control-page-padding);
+    gap: var(--control-page-gap);
   }
 
   .overview-card {
@@ -1016,6 +1016,19 @@
 @media (max-width: 640px) {
   .overview-hero {
     align-items: stretch;
+  }
+
+  .overview-hero__meta,
+  .overview-profile-row,
+  .overview-actions-row {
+    width: 100%;
+  }
+
+  .overview-hero__meta > *,
+  .overview-profile-row > *,
+  .overview-actions-row > * {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 
   .overview-hero__title {
@@ -1048,5 +1061,10 @@
   .overview-timeline__time,
   .overview-session-row__time {
     white-space: normal;
+  }
+
+  .overview-callout__code {
+    width: 100%;
+    overflow-x: auto;
   }
 }

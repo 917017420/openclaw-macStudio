@@ -131,6 +131,27 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+@media (max-width: 1100px) {
+  :root {
+    --control-page-padding: 16px;
+    --control-page-gap: 18px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --control-page-padding: 14px;
+    --control-page-gap: 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  :root {
+    --control-page-padding: 12px;
+    --control-page-gap: 14px;
+  }
+}
+
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }

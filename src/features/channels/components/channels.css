@@ -804,7 +804,7 @@
 
 @container channels-page (max-width: 760px) {
   .channels-page {
-    padding: 14px;
+    padding: var(--control-page-padding);
   }
 
   .channels-page .workspace-toolbar,
@@ -824,6 +824,13 @@
     font-size: 18px;
   }
 
+  .channels-page .workspace-toolbar__actions > *,
+  .channels-overview-pills span,
+  .channels-snapshot__meta > * {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
   .channels-actions > * {
     flex: 1 1 calc(50% - 4px);
     min-width: 0;
@@ -841,7 +848,7 @@
 
 @container channels-page (max-width: 560px) {
   .channels-page {
-    padding: 10px;
+    padding: var(--control-page-padding);
   }
 
   .channels-card {
@@ -849,6 +856,12 @@
   }
 
   .channels-actions > * {
+    flex-basis: 100%;
+  }
+
+  .channels-page .workspace-toolbar__actions > *,
+  .channels-overview-pills span,
+  .channels-snapshot__meta > * {
     flex-basis: 100%;
   }
 
