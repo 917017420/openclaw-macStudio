@@ -80,6 +80,15 @@ function renderStatusList(items: Array<{ label: string; value: string }>) {
   );
 }
 
+function channelMonogram(label: string) {
+  return label
+    .split(/\s+/u)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
 function renderProbeCallout(status: JsonRecord | undefined) {
   const message = summarizeProbe(status?.probe);
   if (!message) {
@@ -817,10 +826,15 @@ export function ChannelsPage() {
                 }`}
               >
                 <div className="channels-card__header">
-                  <div>
-                    <div className="channels-card__eyebrow">{channel.id}</div>
-                    <h3>{channel.label}</h3>
-                    <p>{channel.detail}</p>
+                  <div className="channels-card__title-wrap">
+                    <div className="channels-card__sigil" aria-hidden="true">
+                      {channelMonogram(channel.label)}
+                    </div>
+                    <div>
+                      <div className="channels-card__eyebrow">{channel.id}</div>
+                      <h3>{channel.label}</h3>
+                      <p>{channel.detail}</p>
+                    </div>
                   </div>
                   <StatusBadge
                     status={statusTone(status)}
