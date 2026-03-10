@@ -96,9 +96,9 @@
 .channels-page .workspace-empty-inline {
   align-items: center;
   gap: 10px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border: 1px solid var(--control-card-border);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  background: var(--control-muted-bg);
   padding: 13px 15px;
   color: var(--text);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
@@ -149,8 +149,8 @@
   min-height: 28px;
   padding: 0 11px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
-  background: color-mix(in srgb, var(--bg-hover) 48%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-pill-bg);
   font-size: 12px;
   color: var(--muted);
 }
@@ -277,10 +277,10 @@
 }
 
 .channels-account-card {
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border: 1px solid var(--control-card-border);
   border-radius: 16px;
   padding: 12px;
-  background: color-mix(in srgb, var(--bg-hover) 42%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
 }
 
 .channels-account-card__header {
@@ -314,10 +314,10 @@
 .channels-profile-editor {
   display: grid;
   gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border: 1px solid var(--control-card-border);
   border-radius: 16px;
   padding: 14px;
-  background: color-mix(in srgb, var(--bg-hover) 42%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
 }
 
 .channels-profile-card__title,
@@ -570,7 +570,7 @@
 .channels-input,
 .channels-form-readonly {
   width: 100%;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border: 1px solid var(--control-card-border);
   background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
   color: var(--text);
   border-radius: 12px;
@@ -595,14 +595,14 @@
 .channels-icon-btn:focus-visible,
 .channels-segmented__btn:hover,
 .channels-segmented__btn:focus-visible {
-  border-color: color-mix(in srgb, var(--border-strong) 92%, transparent);
+  border-color: var(--control-card-border-strong);
 }
 
 .channels-input:focus,
 .channels-segmented__btn:focus-visible,
 .channels-icon-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: var(--control-focus-ring);
   background: color-mix(in srgb, var(--panel-strong) 90%, transparent);
 }
 
@@ -637,8 +637,8 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
-  background: color-mix(in srgb, var(--bg-hover) 44%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-pill-bg);
   color: var(--muted);
   cursor: pointer;
   transition:
@@ -708,6 +708,10 @@
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.channels-toggle input:focus-visible + .channels-toggle__track {
+  box-shadow: var(--control-focus-ring);
 }
 
 .channels-toggle__track {

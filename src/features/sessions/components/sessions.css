@@ -110,9 +110,9 @@
   gap: 8px;
   min-height: 36px;
   padding: 9px 16px;
-  border: 1px solid color-mix(in srgb, var(--border) 96%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  border: 1px solid var(--control-card-border);
+  border-radius: 12px;
+  background: var(--control-pill-bg);
   color: var(--text);
   font: inherit;
   font-size: 13px;
@@ -128,7 +128,7 @@
 }
 
 .sessions-btn:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--border-strong) 92%, transparent);
+  border-color: var(--control-card-border-strong);
   background: color-mix(in srgb, var(--bg-hover) 92%, transparent);
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
@@ -144,8 +144,8 @@
 .sessions-field select:focus-visible,
 .sessions-search input:focus-visible,
 .sessions-row:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--control-focus-ring);
 }
 
 .sessions-btn:disabled {
@@ -218,9 +218,9 @@
 .sessions-search {
   min-width: 0;
   min-height: 38px;
-  border: 1px solid color-mix(in srgb, var(--border) 94%, transparent);
+  border: 1px solid var(--control-card-border);
   background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--text);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
   transition:
@@ -253,14 +253,14 @@
 .sessions-field input:hover,
 .sessions-field select:hover,
 .sessions-search:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
+  border-color: var(--control-card-border-strong);
 }
 
 .sessions-field input:focus,
 .sessions-field select:focus,
 .sessions-search:focus-within {
   border-color: color-mix(in srgb, var(--accent) 54%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: var(--control-focus-ring);
 }
 
 .sessions-field--checkbox {
@@ -300,10 +300,11 @@
 .sessions-callout {
   padding: 14px 16px;
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
-  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-muted-bg);
   font-size: 13px;
   line-height: 1.5;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
 }
 
 .sessions-callout.is-danger {
@@ -695,7 +696,7 @@
 }
 
 .sessions-row:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 94%, transparent);
+  border-color: var(--control-card-border-strong);
   background: color-mix(in srgb, var(--bg-hover) 70%, var(--panel-strong));
   transform: translateY(-1px);
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
@@ -791,7 +792,7 @@
   text-align: center;
   border: 1px dashed color-mix(in srgb, var(--border-strong) 62%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
 }
 
 .sessions-card--detail .sessions-empty-inline,

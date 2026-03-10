@@ -226,7 +226,7 @@
 .overview-field input,
 .overview-field select {
   width: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-card-border);
   background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
   color: var(--text);
   border-radius: 12px;
@@ -247,13 +247,24 @@
 .overview-field input:focus,
 .overview-field select:focus {
   border-color: color-mix(in srgb, var(--accent) 76%, white 24%);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: var(--control-focus-ring);
   background: color-mix(in srgb, var(--panel-strong) 90%, transparent);
+}
+
+.overview-field input:focus-visible,
+.overview-field select:focus-visible,
+.overview-btn:focus-visible,
+.overview-action-tile:focus-visible,
+.overview-profile-chip:focus-visible,
+.overview-session-row:focus-visible,
+.overview-link:focus-visible {
+  outline: none;
+  box-shadow: var(--control-focus-ring);
 }
 
 .overview-field input:hover,
 .overview-field select:hover {
-  border-color: var(--border-strong);
+  border-color: var(--control-card-border-strong);
 }
 
 .overview-field input:disabled,
@@ -276,8 +287,8 @@
   justify-content: center;
   gap: 8px;
   min-height: 38px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  border: 1px solid var(--control-card-border);
+  background: var(--control-pill-bg);
   color: var(--text);
   padding: 0 16px;
   border-radius: 12px;
@@ -294,8 +305,8 @@
 }
 
 .overview-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  border-color: var(--control-card-border-strong);
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
 }
@@ -430,10 +441,11 @@
 .overview-callout {
   padding: 14px 16px;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-elevated) 88%, var(--bg));
-  border: 1px solid var(--border);
+  background: var(--control-muted-bg);
+  border: 1px solid var(--control-card-border);
   font-size: 13px;
   line-height: 1.6;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
 }
 
 .overview-callout--danger {
@@ -599,9 +611,9 @@
 
 .overview-action-tile {
   text-align: left;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-card-border);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
   color: var(--text);
   padding: 16px;
   display: grid;
@@ -628,7 +640,7 @@
 
 .overview-action-tile:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border-strong));
-  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
   transform: translateY(-1px);
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.12);
 }
@@ -653,9 +665,9 @@
   align-items: center;
   gap: 8px;
   min-height: 34px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-card-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-strong) 76%, transparent);
+  background: var(--control-pill-bg);
   color: var(--muted);
   padding: 0 12px;
   cursor: pointer;
@@ -667,7 +679,7 @@
 }
 
 .overview-profile-chip:hover {
-  border-color: var(--border-strong);
+  border-color: var(--control-card-border-strong);
   color: var(--text);
   transform: translateY(-1px);
 }
@@ -730,14 +742,14 @@
 
 .overview-empty-inline {
   min-height: 120px;
-  border: 1px dashed var(--border);
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 60%, transparent);
   border-radius: 14px;
   padding: 16px;
   display: flex;
   align-items: center;
   gap: 10px;
   color: var(--muted);
-  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  background: color-mix(in srgb, var(--panel-strong) 76%, transparent);
 }
 
 .overview-empty-inline--success {
