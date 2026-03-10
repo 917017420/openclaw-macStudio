@@ -15,11 +15,7 @@ const publicKey = ed25519.getPublicKey(privateKey);
 const deviceId = bytesToHex(sha256(publicKey));
 
 function toBase64url(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return Buffer.from(bytes).toString("base64url");
 }
 
 console.log("Connecting to:", GATEWAY_URL);
@@ -43,7 +39,13 @@ ws.on("message", (data) => {
     console.log("\n[Challenge] nonce:", nonce);
 
     const signedAt = Date.now();
-    const scopes = ["operator.admin", "operator.approvals", "operator.pairing"];
+    const scopes = [
+      "operator.admin",
+      "operator.approvals",
+      "operator.pairing",
+      "operator.read",
+      "operator.write",
+    ];
 
     // Try v3 payload
     const payloadV3 = [

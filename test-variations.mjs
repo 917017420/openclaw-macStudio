@@ -9,11 +9,7 @@ const GATEWAY_URL = process.argv[2] || "ws://43.163.251.25:18789";
 const TOKEN = process.argv[3] || "fe33b7ea79209e97c32e2aa5cbc581c8";
 
 function toBase64url(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return Buffer.from(bytes).toString("base64url");
 }
 
 // Test variations of the signature payload
@@ -82,7 +78,13 @@ async function tryVariation(index) {
       if (msg.type === "event" && msg.event === "connect.challenge") {
         const nonce = msg.payload.nonce;
         const signedAt = Date.now();
-        const scopes = ["operator.admin", "operator.approvals", "operator.pairing"];
+        const scopes = [
+          "operator.admin",
+          "operator.approvals",
+          "operator.pairing",
+          "operator.read",
+          "operator.write",
+        ];
 
         const payload = variation.build(deviceId, scopes, signedAt, nonce);
         console.log("[Payload]", payload);

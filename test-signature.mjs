@@ -22,7 +22,7 @@ const payload = [
   "gateway-client",
   "ui",
   "operator",
-  "operator.admin,operator.approvals,operator.pairing",
+  "operator.admin,operator.approvals,operator.pairing,operator.read,operator.write",
   String(Date.now()),
   "test-token-123",
   "test-nonce-456",
@@ -73,14 +73,7 @@ console.log("--- Node.js crypto.verify:", nodeVerify);
 
 // 6. Test with our bytesToBase64url function (same as in auth.ts)
 function bytesToBase64url_ours(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+  return Buffer.from(bytes).toString("base64url");
 }
 
 const sigOurEncoding = bytesToBase64url_ours(signature);
