@@ -1033,6 +1033,12 @@ export function AgentsPage() {
         </div>
       )}
 
+      {configQuery.data?.valid === false && (
+        <div className="workspace-alert workspace-alert--error">
+          Gateway config currently reports validation issues{configQuery.data.issues.length > 0 ? ` (${configQuery.data.issues.length})` : ""}. Agent edits may be partially constrained until the config is fixed.
+        </div>
+      )}
+
       <div className="agents-shell">
         <Card className="agents-sidebar" padding={false}>
           <div className="agents-sidebar__header">
@@ -1687,6 +1693,16 @@ export function AgentsPage() {
                   </div>
 
                   {skillsQuery.error && <div className="workspace-alert workspace-alert--error">{String(skillsQuery.error)}</div>}
+
+                  <div className="agents-banner agents-banner--info">
+                    <TriangleAlert size={14} />
+                    <span>`skills.install` and `skills.update` are available here. Dedicated uninstall RPCs are not exposed by the current gateway, so disabling a skill is the closest supported fallback.</span>
+                  </div>
+
+                  <div className="agents-banner agents-banner--info">
+                    <TriangleAlert size={14} />
+                    <span>`skills.install` and `skills.update` are available here. Dedicated uninstall RPCs are not exposed by the current gateway, so disabling a skill is the closest supported fallback.</span>
+                  </div>
 
                   <div className="agents-skill-meta">
                     <div className="agents-kv">
