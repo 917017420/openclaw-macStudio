@@ -559,6 +559,8 @@ export function OverviewPage() {
     };
   }, []);
 
+  const showLoadingShell = overviewQuery.isLoading && !overviewQuery.data;
+
   const overviewQuery = useQuery<OverviewData>({
     queryKey: [...OVERVIEW_QUERY_KEY, activeConfigId ?? "none"],
     enabled: isConnected,
@@ -666,7 +668,7 @@ export function OverviewPage() {
   const snapshotCallout = (() => {
     if (lastError) {
       return (
-        <div className="overview-callout overview-callout--danger">
+        <div className="overview-callout overview-callout--danger" aria-live="polite">
           <div>{lastError}</div>
 
           {shouldShowPairingHint(isConnected, lastError, lastErrorCode) && (
@@ -721,12 +723,12 @@ export function OverviewPage() {
     }
 
     if (overviewQuery.error) {
-      return <div className="overview-callout overview-callout--danger">{String(overviewQuery.error)}</div>;
+      return <div className="overview-callout overview-callout--danger" aria-live="polite">{String(overviewQuery.error)}</div>;
     }
 
     if (overviewQuery.data?.issues.length) {
       return (
-        <div className="overview-callout">
+        <div className="overview-callout" aria-live="polite">
           Some overview RPCs failed to refresh, so a few panels may still be stale while the dashboard keeps the last good snapshot visible.
         </div>
       );
@@ -1002,7 +1004,10 @@ export function OverviewPage() {
           <div className="overview-chart">
             {chartBars.map((bar) => (
               <div key={bar.date} className="overview-chart__column">
-                <div className="overview-chart__bar-wrap">
+                <div
+                  className="overview-chart__bar-wrap"
+                  title={`${bar.label}: ${formatTokens(bar.tokens)} tokens · ${formatCurrency(bar.cost)}`}
+                >
                   <div className="overview-chart__bar" style={{ height: `${bar.percent}%` }} />
                 </div>
                 <div className="overview-chart__value">{bar.tokens > 0 ? formatCompactCount(bar.tokens) : "—"}</div>
@@ -1150,7 +1155,7 @@ export function OverviewPage() {
               No active alerts. Gateway health, auth, and usage signals look stable.
             </div>
           ) : (
-            <div className="overview-alert-list">
+            <div className="overview-alert-list" aria-live="polite">
               {alerts.map((alert) => (
                 <div key={alert.id} className={cn("overview-alert", `is-${alert.tone}`)}>
                   <div className="overview-alert__title">
@@ -1241,6 +1246,7 @@ export function OverviewPage() {
                 key={session.key}
                 type="button"
                 className="overview-session-row"
+                title={`${session.title} · ${session.messageCount.toLocaleString()} messages`}
                 onClick={() => {
                   selectSession(session.key);
                   navigate("/chat");
@@ -1256,6 +1262,19 @@ export function OverviewPage() {
           </div>
         </div>
       </section>
+
+      {showLoadingShell ? (
+        <section className="overview-grid overview-grid--metrics" aria-hidden="true">
+          {Array.from({ length: 6 }, (_, index) => (
+            <div key={index} className="overview-card overview-card--metric overview-skeleton-card">
+              <div className="overview-skeleton overview-skeleton--icon" />
+              <div className="overview-skeleton overview-skeleton--line short" />
+              <div className="overview-skeleton overview-skeleton--line" />
+              <div className="overview-skeleton overview-skeleton--line mid" />
+            </div>
+          ))}
+        </section>
+      ) : null}
     </div>
   );
 }

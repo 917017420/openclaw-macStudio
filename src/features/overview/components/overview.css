@@ -749,6 +749,43 @@
   border-color: color-mix(in srgb, var(--ok) 24%, transparent);
 }
 
+.overview-skeleton-card {
+  pointer-events: none;
+}
+
+.overview-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+}
+
+.overview-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, white 12%, transparent), transparent);
+  animation: overview-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.overview-skeleton--icon {
+  width: 34px;
+  height: 34px;
+}
+
+.overview-skeleton--line {
+  height: 12px;
+}
+
+.overview-skeleton--line.short {
+  width: 44%;
+}
+
+.overview-skeleton--line.mid {
+  width: 68%;
+}
+
 .overview-timeline {
   display: grid;
   gap: 12px;
@@ -885,6 +922,40 @@
 @keyframes overview-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes overview-skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overview-card,
+  .overview-btn,
+  .overview-status-card,
+  .overview-stat,
+  .overview-card--metric,
+  .overview-action-tile,
+  .overview-profile-chip,
+  .overview-session-row,
+  .overview-chart__bar,
+  .overview-progress__bar {
+    transition: none;
+  }
+
+  .overview-card:hover,
+  .overview-btn:hover:not(:disabled),
+  .overview-action-tile:hover:not(:disabled),
+  .overview-profile-chip:hover,
+  .overview-session-row:hover {
+    transform: none;
+  }
+
+  .spin,
+  .overview-skeleton::after {
+    animation: none;
   }
 }
 
