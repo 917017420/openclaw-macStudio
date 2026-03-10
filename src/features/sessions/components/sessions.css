@@ -610,6 +610,12 @@
   grid-template-columns: minmax(0, 1.8fr) 0.9fr 0.9fr 0.7fr;
   gap: 14px;
   padding: 0 14px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 4px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 98%, transparent) 0%, color-mix(in srgb, var(--panel) 88%, transparent) 82%, transparent 100%);
+  backdrop-filter: blur(6px);
   color: color-mix(in srgb, var(--muted) 94%, transparent);
   font-size: 11px;
   font-weight: 600;
@@ -623,6 +629,7 @@
   display: grid;
   gap: 14px;
   padding-right: 4px;
+  scroll-padding-top: 16px;
 }
 
 .sessions-group {
@@ -769,6 +776,13 @@
   background: color-mix(in srgb, var(--panel-strong) 80%, transparent);
 }
 
+.sessions-card--detail .sessions-empty-inline,
+.sessions-card--detail .sessions-state,
+.sessions-detail-card .sessions-empty-inline,
+.sessions-detail-card .sessions-state {
+  min-height: 132px;
+}
+
 .sessions-empty-state {
   flex-direction: column;
 }
@@ -788,6 +802,7 @@
   display: grid;
   gap: 14px;
   padding-right: 4px;
+  scroll-behavior: smooth;
 }
 
 .sessions-detail-hero {
