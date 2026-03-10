@@ -546,9 +546,18 @@ export function OverviewPage() {
   }, [languageDraft]);
 
   useEffect(() => {
-    const subscription = gateway.on("*", () => {
-      setLiveTick((value) => value + 1);
-    });
+    let batchedTimer: number | null = null;
+    const scheduleTick = () => {
+      if (batchedTimer != null) {
+        return;
+      }
+      batchedTimer = window.setTimeout(() => {
+        batchedTimer = null;
+        setLiveTick((value) => value + 1);
+      }, 180);
+    };
+
+    const subscription = gateway.on("*", scheduleTick);
     const timer = window.setInterval(() => {
       setLiveTick((value) => value + 1);
     }, 60_000);
@@ -556,6 +565,9 @@ export function OverviewPage() {
     return () => {
       subscription.unsubscribe();
       window.clearInterval(timer);
+      if (batchedTimer != null) {
+        window.clearTimeout(batchedTimer);
+      }
     };
   }, []);
 
