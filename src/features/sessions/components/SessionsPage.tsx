@@ -17,6 +17,7 @@ import {
 import { SESSIONS_QUERY_KEY, messagesQueryKey } from "@/features/chat/hooks";
 import { useConnectionStore } from "@/features/connection/store";
 import { useChatStore } from "@/features/chat/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import { formatRelativeTime, truncate } from "@/lib/utils";
 import { useSessionTranscript, useWorkspaceSessions } from "../hooks";
@@ -105,17 +106,17 @@ function parseSessionAgentId(key: string): string | null {
   return match?.[1] ?? null;
 }
 
-function sessionKindLabel(kind: SessionKind): string {
+function sessionKindLabel(kind: SessionKind, isChinese: boolean): string {
   switch (kind) {
     case "direct":
-      return "Direct";
+      return isChinese ? "直接" : "Direct";
     case "group":
-      return "Group";
+      return isChinese ? "群组" : "Group";
     case "global":
-      return "Global";
+      return isChinese ? "全局" : "Global";
     case "unknown":
     default:
-      return "Unknown";
+      return isChinese ? "未知" : "Unknown";
   }
 }
 
@@ -133,19 +134,19 @@ function sessionLabel(row: SessionRow): string {
   return row.label?.trim() || row.displayName?.trim() || row.derivedTitle?.trim() || "—";
 }
 
-function sessionSurface(row: SessionRow): string {
-  return row.surface || row.channel || row.originLabel || "Unknown surface";
+function sessionSurface(row: SessionRow, isChinese: boolean): string {
+  return row.surface || row.channel || row.originLabel || (isChinese ? "未知界面来源" : "Unknown surface");
 }
 
 function sessionRoute(row: SessionRow): string {
   return row.room || row.groupChannel || row.space || row.subject || row.lastTo || "—";
 }
 
-function sessionModel(row: SessionRow): string {
+function sessionModel(row: SessionRow, isChinese: boolean): string {
   if (row.modelProvider && row.model) {
     return `${row.modelProvider}/${row.model}`;
   }
-  return row.model || row.modelProvider || "inherit";
+  return row.model || row.modelProvider || (isChinese ? "继承" : "inherit");
 }
 
 function sessionTokenTotal(row: SessionRow): number {
@@ -161,29 +162,34 @@ function sessionTokenSummary(row: SessionRow): string {
   return total > 0 ? total.toLocaleString() : "—";
 }
 
-function sessionTokenBreakdown(row: SessionRow): string {
-  return `${(row.inputTokens ?? 0).toLocaleString()} in · ${(row.outputTokens ?? 0).toLocaleString()} out`;
+function sessionTokenBreakdown(row: SessionRow, isChinese: boolean): string {
+  return isChinese
+    ? `${(row.inputTokens ?? 0).toLocaleString()} 输入 · ${(row.outputTokens ?? 0).toLocaleString()} 输出`
+    : `${(row.inputTokens ?? 0).toLocaleString()} in · ${(row.outputTokens ?? 0).toLocaleString()} out`;
 }
 
-function formatTimestamp(value: number | null | undefined): string {
-  return value ? new Date(value).toLocaleString() : "No timestamp recorded";
+function formatTimestamp(value: number | null | undefined, language: string, isChinese: boolean): string {
+  return value ? new Date(value).toLocaleString(language) : (isChinese ? "没有记录时间戳" : "No timestamp recorded");
 }
 
-function transcriptSourceLabel(source: "history" | "preview"): string {
-  return source === "history" ? "History" : "Preview";
+function transcriptSourceLabel(source: "history" | "preview", isChinese: boolean): string {
+  if (source === "history") {
+    return isChinese ? "历史记录" : "History";
+  }
+  return isChinese ? "预览" : "Preview";
 }
 
-function transcriptStatusLabel(status: "ok" | "empty" | "missing" | "error"): string {
+function transcriptStatusLabel(status: "ok" | "empty" | "missing" | "error", isChinese: boolean): string {
   switch (status) {
     case "ok":
-      return "Transcript ready";
+      return isChinese ? "转录已就绪" : "Transcript ready";
     case "empty":
-      return "Transcript is empty";
+      return isChinese ? "转录为空" : "Transcript is empty";
     case "missing":
-      return "Transcript missing";
+      return isChinese ? "缺少转录" : "Transcript missing";
     case "error":
     default:
-      return "Transcript unavailable";
+      return isChinese ? "转录不可用" : "Transcript unavailable";
   }
 }
 
@@ -277,6 +283,21 @@ function sessionActivityBucket(row: SessionRow): (typeof ACTIVITY_BUCKETS)[numbe
   return "Older";
 }
 
+function activityBucketLabel(bucket: (typeof ACTIVITY_BUCKETS)[number], isChinese: boolean): string {
+  if (!isChinese) return bucket;
+  switch (bucket) {
+    case "Updated in hour":
+      return "1 小时内更新";
+    case "Updated today":
+      return "今天更新";
+    case "Updated this week":
+      return "本周更新";
+    case "Older":
+    default:
+      return "更早";
+  }
+}
+
 function groupOrder(label: string, groupBy: SessionGroupBy): number {
   if (groupBy === "kind") {
     return ["Direct", "Group", "Global", "Unknown"].indexOf(label);
@@ -287,21 +308,26 @@ function groupOrder(label: string, groupBy: SessionGroupBy): number {
   return Number.MAX_SAFE_INTEGER;
 }
 
-function groupSessions(rows: SessionRow[], groupBy: SessionGroupBy): SessionGroup[] {
+function groupSessions(rows: SessionRow[], groupBy: SessionGroupBy, isChinese: boolean): SessionGroup[] {
   if (groupBy === "none") {
-    return [{ id: "all", label: "All Sessions", description: `${rows.length} visible`, rows }];
+    return [{
+      id: "all",
+      label: isChinese ? "全部会话" : "All Sessions",
+      description: isChinese ? `显示 ${rows.length} 条` : `${rows.length} visible`,
+      rows,
+    }];
   }
 
   const groups = new Map<string, SessionRow[]>();
   for (const row of rows) {
     const label =
       groupBy === "kind"
-        ? sessionKindLabel(row.kind)
+        ? sessionKindLabel(row.kind, isChinese)
         : groupBy === "provider"
-          ? row.modelProvider || "Inherited provider"
+          ? row.modelProvider || (isChinese ? "继承提供商" : "Inherited provider")
           : groupBy === "surface"
-            ? sessionSurface(row)
-            : sessionActivityBucket(row);
+            ? sessionSurface(row, isChinese)
+            : activityBucketLabel(sessionActivityBucket(row), isChinese);
     const bucket = groups.get(label) ?? [];
     bucket.push(row);
     groups.set(label, bucket);
@@ -317,26 +343,28 @@ function groupSessions(rows: SessionRow[], groupBy: SessionGroupBy): SessionGrou
     .map(([label, groupedRows]) => ({
       id: `${groupBy}-${label}`,
       label,
-      description: `${groupedRows.length} session${groupedRows.length === 1 ? "" : "s"}`,
+      description: isChinese
+        ? `${groupedRows.length} 个会话`
+        : `${groupedRows.length} session${groupedRows.length === 1 ? "" : "s"}`,
       rows: groupedRows,
     }));
 }
 
-function sessionFacts(row: SessionRow): string[] {
-  const facts = [sessionKindLabel(row.kind)];
-  const surface = sessionSurface(row);
+function sessionFacts(row: SessionRow, isChinese: boolean): string[] {
+  const facts = [sessionKindLabel(row.kind, isChinese)];
+  const surface = sessionSurface(row, isChinese);
   if (surface) facts.push(surface);
   if (row.subject && row.subject !== sessionTitle(row)) facts.push(row.subject);
-  if (row.room || row.groupChannel) facts.push(`room ${row.room || row.groupChannel}`);
-  if (row.space) facts.push(`space ${row.space}`);
+  if (row.room || row.groupChannel) facts.push(isChinese ? `房间 ${row.room || row.groupChannel}` : `room ${row.room || row.groupChannel}`);
+  if (row.space) facts.push(isChinese ? `空间 ${row.space}` : `space ${row.space}`);
   if (row.modelProvider && row.model) facts.push(`${row.modelProvider}/${row.model}`);
   else if (row.model) facts.push(row.model);
-  if (sessionTokenTotal(row) > 0) facts.push(`${sessionTokenTotal(row).toLocaleString()} tokens`);
-  if (row.elevatedLevel) facts.push(`${row.elevatedLevel} privileges`);
-  if (row.sendPolicy) facts.push(`send ${row.sendPolicy}`);
-  if (row.responseUsage) facts.push(`usage ${row.responseUsage}`);
-  if (row.systemSent) facts.push("system-originated");
-  if (row.abortedLastRun) facts.push("aborted last run");
+  if (sessionTokenTotal(row) > 0) facts.push(`${sessionTokenTotal(row).toLocaleString()} ${isChinese ? "Tokens" : "tokens"}`);
+  if (row.elevatedLevel) facts.push(isChinese ? `${row.elevatedLevel} 权限` : `${row.elevatedLevel} privileges`);
+  if (row.sendPolicy) facts.push(isChinese ? `发送 ${row.sendPolicy}` : `send ${row.sendPolicy}`);
+  if (row.responseUsage) facts.push(isChinese ? `用量 ${row.responseUsage}` : `usage ${row.responseUsage}`);
+  if (row.systemSent) facts.push(isChinese ? "系统发起" : "system-originated");
+  if (row.abortedLastRun) facts.push(isChinese ? "上次运行已中止" : "aborted last run");
   return facts;
 }
 
@@ -346,6 +374,297 @@ function percentage(value: number, total: number): string {
 }
 
 export function SessionsPage() {
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const pageCopy = isChinese
+    ? {
+        eyebrow: "控制台",
+        title: "会话",
+        subtitle: "官方风格的会话工作区，用于查看活跃 Key、缓存指标和会话级覆盖配置。",
+        loading: "加载中…",
+        refresh: "刷新",
+        search: "搜索",
+        searchPlaceholder: "Key、标签、预览、模型、路由",
+        kind: "类型",
+        all: "全部",
+        direct: "直接",
+        group: "群组",
+        global: "全局",
+        unknown: "未知",
+        sort: "排序",
+        newestFirst: "最新优先",
+        oldestFirst: "最旧优先",
+        titleAsc: "标题 A-Z",
+        titleDesc: "标题 Z-A",
+        mostTokens: "最多 Tokens",
+        groupBy: "分组",
+        activity: "活跃度",
+        provider: "提供商",
+        surface: "界面来源",
+        none: "无",
+        activeWithin: "活跃时间内",
+        rowLimit: "行数上限",
+        includeGlobal: "包含全局",
+        includeUnknown: "包含未知",
+        resetFilters: "重置筛选",
+        gatewayMemory: "网关内存",
+        visibility: "可见性",
+        shown: "已显示",
+        connection: "连接",
+        connected: "已连接",
+        disconnected: "未连接",
+        visibleSessions: "可见会话",
+        hiddenByFilters: (count: number) => `${count} 条被当前筛选隐藏`,
+        allVisible: "所有已拉取行都可见",
+        kinds: "类型",
+        activeRecently: "最近活跃",
+        abortedRows: (count: number) => `${count} 条标记为中止`,
+        noAborted: "当前视图没有中止记录",
+        cachedTokens: "缓存 Tokens",
+        tokenCacheWaiting: "等待带有 Token 的记录",
+        tokenCacheReady: "来自会话缓存的 Token 总数",
+        sessionMix: "会话分布",
+        sessionMixDetail: "按会话类型分布。",
+        activityBuckets: "活跃桶",
+        activityBucketsDetail: "可见记录的最近更新时间分布。",
+        topTokenSessions: "高 Token 会话",
+        topTokenSessionsDetail: "当前视图中缓存 Token 总数最高的会话。",
+        noTokenTotals: "还没有可用的 Token 总数。",
+        sessionList: "会话列表",
+        sessionListDetail: "像上游 Sessions 工作区一样支持分组、搜索和排序。",
+        groups: (count: number) => `${count} 组`,
+        session: "会话",
+        status: "状态",
+        updated: "更新时间",
+        tokens: "Tokens",
+        loadingSessions: "正在加载会话…",
+        noSessionsForGateway: "当前网关筛选条件下没有会话。",
+        noSessionsMatched: "没有会话匹配当前筛选条件。",
+        active: "活跃",
+        aborted: "已中止",
+        unknownTime: "未知",
+        sessionDetails: "会话详情",
+        selectSessionHint: "选择一个会话以查看 tokens、模型、时间戳和转录预览。",
+        available: "可用",
+        noSessionSelected: "未选择会话",
+        chooseSessionHint: "从列表中选择一行以查看路由、覆盖项和转录预览。",
+        timestampUnavailable: "时间戳不可用",
+        openInChat: "在聊天中打开",
+        rename: "重命名",
+        archive: "归档",
+        deleteRow: "删除行",
+        archiveTitle: "归档转录并移除会话条目",
+        deleteTitle: "移除会话条目但不归档转录文件",
+        transcriptRows: "转录行数",
+        responseUsage: "响应用量",
+        cachedTotalMayBeStale: "缓存总数可能已过期",
+        tokenCacheFresh: "Token 缓存看起来是新的",
+        resolvedDefaults: "默认解析值",
+        resolvedDefaultsDetail: "来自网关的工作区级会话默认值。",
+        resolvedSession: "会话解析值",
+        resolvedSessionDetail: "模型、策略和会话级身份。",
+        routing: "路由",
+        routingDetail: "Agent、界面来源、房间和投递目标。",
+        usage: "用量",
+        usageDetail: "缓存的用量计数和来源元数据。",
+        overrides: "覆盖项",
+        overridesDetail: "重命名、补丁单会话覆盖项，或在保留工作区默认值的同时重置会话。",
+        reset: "重置",
+        saveOverrides: "保存覆盖项",
+        label: "标签",
+        optionalLabelOverride: "可选标签覆盖",
+        thinkingLevel: "思考级别",
+        verboseLevel: "详细级别",
+        reasoningLevel: "推理级别",
+        inherit: "继承",
+        transcriptPreview: "转录预览",
+        loadingTranscript: "正在加载转录预览…",
+        transcriptSourceSuffix: "来源",
+        sessionStore: "会话存储",
+        liveGateway: "实时网关",
+        sessionMixTitle: "会话分布",
+        sessionListTitle: "会话列表",
+        providerLabel: "提供商",
+        modelLabel: "模型",
+        contextLabel: "上下文",
+        storeLabel: "存储来源",
+        privilegesLabel: "权限",
+        sendPolicyLabel: "发送策略",
+        agentLabel: "智能体",
+        sessionIdLabel: "会话 ID",
+        surfaceLabel: "界面来源",
+        routeLabel: "路由",
+        lastChannelLabel: "最近渠道",
+        lastRecipientLabel: "最近接收方",
+        inputLabel: "输入",
+        outputLabel: "输出",
+        totalLabel: "总计",
+        originLabel: "来源",
+        accountLabel: "账号",
+        tokenCacheLabel: "Token 缓存",
+        fresh: "最新",
+        stale: "过期",
+        system: "系统",
+        user: "用户",
+        standard: "标准",
+        allow: "允许",
+        notAvailable: "不可用",
+        errorPrefix: "错误",
+        resetSuccess: (key: string) => `已重置 ${key}。`,
+        saveSuccess: (key: string) => `已保存 ${key} 的覆盖项。`,
+        renameSuccess: (key: string) => `已重命名 ${key}。`,
+        clearLabelSuccess: (key: string) => `已清除 ${key} 的自定义标签。`,
+        archiveConfirmTitle: "归档会话",
+        deleteConfirmTitle: "删除会话行",
+        archiveConfirmDescription: "会归档转录文件并移除该会话条目。",
+        deleteConfirmDescription: "只会移除会话条目，不会归档转录文件。",
+        archiveSuccess: (key: string) => `已归档转录并移除 ${key}。`,
+        deleteSuccess: (key: string) => `已移除会话行 ${key}。`,
+      }
+    : {
+        eyebrow: "Control Surface",
+        title: "Sessions",
+        subtitle: "Official-style session workspace for active keys, cached metrics, and per-session overrides.",
+        loading: "Loading…",
+        refresh: "Refresh",
+        search: "Search",
+        searchPlaceholder: "Key, label, preview, model, route",
+        kind: "Kind",
+        all: "All",
+        direct: "Direct",
+        group: "Group",
+        global: "Global",
+        unknown: "Unknown",
+        sort: "Sort",
+        newestFirst: "Newest first",
+        oldestFirst: "Oldest first",
+        titleAsc: "Title A-Z",
+        titleDesc: "Title Z-A",
+        mostTokens: "Most tokens",
+        groupBy: "Group",
+        activity: "Activity",
+        provider: "Provider",
+        surface: "Surface",
+        none: "None",
+        activeWithin: "Active Within",
+        rowLimit: "Row Limit",
+        includeGlobal: "Include global",
+        includeUnknown: "Include unknown",
+        resetFilters: "Reset filters",
+        gatewayMemory: "Gateway memory",
+        visibility: "Visibility",
+        shown: "shown",
+        connection: "Connection",
+        connected: "Connected",
+        disconnected: "Disconnected",
+        visibleSessions: "Visible sessions",
+        hiddenByFilters: (count: number) => `${count} hidden by current filters`,
+        allVisible: "All fetched rows are visible",
+        kinds: "Kinds",
+        activeRecently: "Active recently",
+        abortedRows: (count: number) => `${count} aborted rows flagged`,
+        noAborted: "No aborted rows in this view",
+        cachedTokens: "Cached tokens",
+        tokenCacheWaiting: "Waiting for token-bearing rows",
+        tokenCacheReady: "Token totals from session cache",
+        sessionMix: "Session mix",
+        sessionMixDetail: "Distribution by session kind.",
+        activityBuckets: "Activity buckets",
+        activityBucketsDetail: "Updated recency across visible rows.",
+        topTokenSessions: "Top token sessions",
+        topTokenSessionsDetail: "Largest cached token totals in the current view.",
+        noTokenTotals: "No token totals available yet.",
+        sessionList: "Session list",
+        sessionListDetail: "Grouped, searchable, and sorted like the upstream Sessions workspace.",
+        groups: (count: number) => `${count} group${count === 1 ? "" : "s"}`,
+        session: "Session",
+        status: "Status",
+        updated: "Updated",
+        tokens: "Tokens",
+        loadingSessions: "Loading sessions…",
+        noSessionsForGateway: "No sessions are available for the current gateway filters.",
+        noSessionsMatched: "No sessions matched the current filters.",
+        active: "active",
+        aborted: "aborted",
+        unknownTime: "unknown",
+        sessionDetails: "Session details",
+        selectSessionHint: "Select a session to inspect tokens, model, timestamps, and transcript preview.",
+        available: "Available",
+        noSessionSelected: "No session selected",
+        chooseSessionHint: "Choose a row from the list to inspect routing, overrides, and transcript preview.",
+        timestampUnavailable: "Timestamp unavailable",
+        openInChat: "Open in Chat",
+        rename: "Rename",
+        archive: "Archive",
+        deleteRow: "Delete Row",
+        archiveTitle: "Archive transcript and remove the session entry",
+        deleteTitle: "Remove the session entry without archiving transcript files",
+        transcriptRows: "Transcript rows",
+        responseUsage: "Response usage",
+        cachedTotalMayBeStale: "cached total may be stale",
+        tokenCacheFresh: "token cache looks fresh",
+        resolvedDefaults: "Resolved defaults",
+        resolvedDefaultsDetail: "Workspace-level session defaults from the gateway.",
+        resolvedSession: "Resolved session",
+        resolvedSessionDetail: "Model, policy, and session-scoped identity.",
+        routing: "Routing",
+        routingDetail: "Agent, surface, room, and delivery targeting.",
+        usage: "Usage",
+        usageDetail: "Cached usage counters and origin metadata.",
+        overrides: "Overrides",
+        overridesDetail: "Rename, patch per-session overrides, or reset the session while keeping workspace defaults.",
+        reset: "Reset",
+        saveOverrides: "Save Overrides",
+        label: "Label",
+        optionalLabelOverride: "Optional label override",
+        thinkingLevel: "Thinking Level",
+        verboseLevel: "Verbose Level",
+        reasoningLevel: "Reasoning Level",
+        inherit: "inherit",
+        transcriptPreview: "Transcript preview",
+        loadingTranscript: "Loading transcript preview…",
+        transcriptSourceSuffix: "source",
+        sessionStore: "Session store",
+        liveGateway: "Live gateway",
+        sessionMixTitle: "Session mix",
+        sessionListTitle: "Session list",
+        providerLabel: "Provider",
+        modelLabel: "Model",
+        contextLabel: "Context",
+        storeLabel: "Store",
+        privilegesLabel: "Privileges",
+        sendPolicyLabel: "Send policy",
+        agentLabel: "Agent",
+        sessionIdLabel: "Session ID",
+        surfaceLabel: "Surface",
+        routeLabel: "Route",
+        lastChannelLabel: "Last channel",
+        lastRecipientLabel: "Last recipient",
+        inputLabel: "Input",
+        outputLabel: "Output",
+        totalLabel: "Total",
+        originLabel: "Origin",
+        accountLabel: "Account",
+        tokenCacheLabel: "Token cache",
+        fresh: "fresh",
+        stale: "stale",
+        system: "system",
+        user: "user",
+        standard: "standard",
+        allow: "allow",
+        notAvailable: "n/a",
+        errorPrefix: "Error",
+        resetSuccess: (key: string) => `Reset ${key}.`,
+        saveSuccess: (key: string) => `Saved overrides for ${key}.`,
+        renameSuccess: (key: string) => `Renamed ${key}.`,
+        clearLabelSuccess: (key: string) => `Cleared custom label for ${key}.`,
+        archiveConfirmTitle: "Archive session",
+        deleteConfirmTitle: "Delete session row",
+        archiveConfirmDescription: "Archives transcript files and removes the session entry.",
+        deleteConfirmDescription: "Removes the session entry without archiving transcript files.",
+        archiveSuccess: (key: string) => `Archived transcript and removed ${key}.`,
+        deleteSuccess: (key: string) => `Removed session row ${key}.`,
+      };
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const labelInputRef = useRef<HTMLInputElement | null>(null);
@@ -386,8 +705,8 @@ export function SessionsPage() {
   }, [allSessions, kindFilter, search, sortBy]);
 
   const groupedSessions = useMemo(
-    () => groupSessions(visibleSessions, groupBy),
-    [groupBy, visibleSessions],
+    () => groupSessions(visibleSessions, groupBy, isChinese),
+    [groupBy, isChinese, visibleSessions],
   );
 
   useEffect(() => {
@@ -420,7 +739,7 @@ export function SessionsPage() {
   const draftChanged = selectedSession ? !draftsEqual(draft, buildDraft(selectedSession)) : false;
   const renameChanged = selectedSession ? draft.label !== (selectedSession.label ?? "") : false;
   const serverCount = sessionsQuery.data?.count ?? allSessions.length;
-  const sourceLabel = sessionsQuery.data?.path ? "Session store" : "Live gateway";
+  const sourceLabel = sessionsQuery.data?.path ? pageCopy.sessionStore : pageCopy.liveGateway;
   const selectedPosition = selectedSession
     ? visibleSessions.findIndex((session) => session.key === selectedSession.key) + 1
     : 0;
@@ -435,7 +754,7 @@ export function SessionsPage() {
     const recent = visibleSessions.filter((session) => sessionActivityBucket(session) !== "Older").length;
     const tokens = visibleSessions.reduce((sum, session) => sum + sessionTokenTotal(session), 0);
     const bucketCounts = ACTIVITY_BUCKETS.map((bucket) => ({
-      label: bucket,
+      label: activityBucketLabel(bucket, isChinese),
       count: visibleSessions.filter((session) => sessionActivityBucket(session) === bucket).length,
     }));
     const topTokenRows = [...visibleSessions]
@@ -525,8 +844,8 @@ export function SessionsPage() {
       setFeedback({
         type: "info",
         message: draft.label.trim()
-          ? `Renamed ${selectedSession.key}.`
-          : `Cleared custom label for ${selectedSession.key}.`,
+          ? pageCopy.renameSuccess(selectedSession.key)
+          : pageCopy.clearLabelSuccess(selectedSession.key),
       });
       await refreshWorkspaceData(selectedSession.key);
     } catch (error) {
@@ -549,7 +868,7 @@ export function SessionsPage() {
         verboseLevel: draft.verboseLevel || null,
         reasoningLevel: draft.reasoningLevel || null,
       });
-      setFeedback({ type: "info", message: `Saved overrides for ${selectedSession.key}.` });
+      setFeedback({ type: "info", message: pageCopy.saveSuccess(selectedSession.key) });
       await refreshWorkspaceData(selectedSession.key);
     } catch (error) {
       setFeedback({ type: "error", message: String(error) });
@@ -565,7 +884,7 @@ export function SessionsPage() {
     try {
       await gateway.request("sessions.reset", { key: selectedSession.key });
       syncLocalChatSession(selectedSession.key, false);
-      setFeedback({ type: "info", message: `Reset ${selectedSession.key}.` });
+      setFeedback({ type: "info", message: pageCopy.resetSuccess(selectedSession.key) });
       await refreshWorkspaceData(selectedSession.key);
     } catch (error) {
       setFeedback({ type: "error", message: String(error) });
@@ -577,10 +896,10 @@ export function SessionsPage() {
   async function removeSession(deleteTranscript: boolean) {
     if (!selectedSession || selectedSession.kind === "global") return;
 
-    const actionLabel = deleteTranscript ? "Archive session" : "Delete session row";
+    const actionLabel = deleteTranscript ? pageCopy.archiveConfirmTitle : pageCopy.deleteConfirmTitle;
     const description = deleteTranscript
-      ? "Archives transcript files and removes the session entry."
-      : "Removes the session entry without archiving transcript files.";
+      ? pageCopy.archiveConfirmDescription
+      : pageCopy.deleteConfirmDescription;
     const confirmed = window.confirm(`${actionLabel} \"${selectedSession.key}\"?\n\n${description}`);
     if (!confirmed) return;
 
@@ -600,8 +919,8 @@ export function SessionsPage() {
       setFeedback({
         type: "info",
         message: deleteTranscript
-          ? `Archived transcript and removed ${deletedKey}.`
-          : `Removed session row ${deletedKey}.`,
+          ? pageCopy.archiveSuccess(deletedKey)
+          : pageCopy.deleteSuccess(deletedKey),
       });
       await refreshWorkspaceData(nextKey);
     } catch (error) {
@@ -630,9 +949,9 @@ export function SessionsPage() {
       <section className="sessions-card sessions-card--hero">
         <div className="sessions-card__row sessions-card__row--top">
           <div>
-            <div className="sessions-card__eyebrow">Control Surface</div>
-            <div className="sessions-card__title">Sessions</div>
-            <div className="sessions-card__sub">Official-style session workspace for active keys, cached metrics, and per-session overrides.</div>
+            <div className="sessions-card__eyebrow">{pageCopy.eyebrow}</div>
+            <div className="sessions-card__title">{pageCopy.title}</div>
+            <div className="sessions-card__sub">{pageCopy.subtitle}</div>
           </div>
           <div className="sessions-hero__actions">
             <button
@@ -642,81 +961,81 @@ export function SessionsPage() {
               disabled={!isConnected || sessionsQuery.isFetching}
             >
               {sessionsQuery.isFetching ? <LoaderCircle size={16} className="spin" /> : <RefreshCw size={16} />}
-              {sessionsQuery.isFetching ? "Loading…" : "Refresh"}
+              {sessionsQuery.isFetching ? pageCopy.loading : pageCopy.refresh}
             </button>
           </div>
         </div>
 
         <div className="sessions-filters">
           <label className="sessions-field sessions-field--search">
-            <span>Search</span>
+            <span>{pageCopy.search}</span>
             <div className="sessions-search">
               <Search size={14} />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Key, label, preview, model, route"
+                placeholder={pageCopy.searchPlaceholder}
               />
             </div>
           </label>
 
           <label className="sessions-field">
-            <span>Kind</span>
+            <span>{pageCopy.kind}</span>
             <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as typeof kindFilter)}>
-              <option value="all">All</option>
-              <option value="direct">Direct</option>
-              <option value="group">Group</option>
-              <option value="global">Global</option>
-              <option value="unknown">Unknown</option>
+              <option value="all">{pageCopy.all}</option>
+              <option value="direct">{pageCopy.direct}</option>
+              <option value="group">{pageCopy.group}</option>
+              <option value="global">{pageCopy.global}</option>
+              <option value="unknown">{pageCopy.unknown}</option>
             </select>
           </label>
 
           <label className="sessions-field">
-            <span>Sort</span>
+            <span>{pageCopy.sort}</span>
             <select value={sortBy} onChange={(event) => setSortBy(event.target.value as SessionSort)}>
-              <option value="updated-desc">Newest first</option>
-              <option value="updated-asc">Oldest first</option>
-              <option value="title-asc">Title A-Z</option>
-              <option value="title-desc">Title Z-A</option>
-              <option value="tokens-desc">Most tokens</option>
+              <option value="updated-desc">{pageCopy.newestFirst}</option>
+              <option value="updated-asc">{pageCopy.oldestFirst}</option>
+              <option value="title-asc">{pageCopy.titleAsc}</option>
+              <option value="title-desc">{pageCopy.titleDesc}</option>
+              <option value="tokens-desc">{pageCopy.mostTokens}</option>
             </select>
           </label>
 
           <label className="sessions-field">
-            <span>Group</span>
+            <span>{pageCopy.groupBy}</span>
             <select value={groupBy} onChange={(event) => setGroupBy(event.target.value as SessionGroupBy)}>
-              <option value="kind">Kind</option>
-              <option value="activity">Activity</option>
-              <option value="provider">Provider</option>
-              <option value="surface">Surface</option>
-              <option value="none">None</option>
+              <option value="kind">{pageCopy.kind}</option>
+              <option value="activity">{pageCopy.activity}</option>
+              <option value="provider">{pageCopy.provider}</option>
+              <option value="surface">{pageCopy.surface}</option>
+              <option value="none">{pageCopy.none}</option>
             </select>
           </label>
 
           <label className="sessions-field">
-            <span>Active Within</span>
+            <span>{pageCopy.activeWithin}</span>
             <input value={activeMinutes} onChange={(event) => setActiveMinutes(event.target.value)} inputMode="numeric" />
           </label>
 
           <label className="sessions-field">
-            <span>Row Limit</span>
+            <span>{pageCopy.rowLimit}</span>
             <input value={limit} onChange={(event) => setLimit(event.target.value)} inputMode="numeric" />
           </label>
 
           <label className="sessions-field sessions-field--checkbox">
             <input type="checkbox" checked={includeGlobal} onChange={(event) => setIncludeGlobal(event.target.checked)} />
-            <span>Include global</span>
+            <span>{pageCopy.includeGlobal}</span>
           </label>
 
           <label className="sessions-field sessions-field--checkbox">
             <input type="checkbox" checked={includeUnknown} onChange={(event) => setIncludeUnknown(event.target.checked)} />
-            <span>Include unknown</span>
+            <span>{pageCopy.includeUnknown}</span>
           </label>
 
           <div className="sessions-filters__actions">
             <button type="button" className="sessions-btn sessions-btn--ghost sessions-btn--sm" onClick={resetFilters}>
               <X size={14} />
-              Reset filters
+              {pageCopy.resetFilters}
             </button>
           </div>
         </div>
@@ -730,46 +1049,46 @@ export function SessionsPage() {
         <div className="sessions-meta-strip">
           <div className="sessions-meta-pill">
             <span>{sourceLabel}</span>
-            <strong className="sessions-mono">{sessionsQuery.data?.path || "Gateway memory"}</strong>
+            <strong className="sessions-mono">{sessionsQuery.data?.path || pageCopy.gatewayMemory}</strong>
           </div>
           <div className="sessions-meta-pill">
-            <span>Visibility</span>
-            <strong>{visibleSessions.length}/{serverCount} shown</strong>
+            <span>{pageCopy.visibility}</span>
+            <strong>{visibleSessions.length}/{serverCount} {pageCopy.shown}</strong>
           </div>
           <div className="sessions-meta-pill">
-            <span>Connection</span>
-            <strong>{isConnected ? "Connected" : "Disconnected"}</strong>
+            <span>{pageCopy.connection}</span>
+            <strong>{isConnected ? pageCopy.connected : pageCopy.disconnected}</strong>
           </div>
         </div>
 
         <div className="sessions-stats-grid">
           <article className="sessions-stat-card">
-            <span className="sessions-stat-card__label">Visible sessions</span>
+            <span className="sessions-stat-card__label">{pageCopy.visibleSessions}</span>
             <strong className="sessions-stat-card__value">{summary.total}</strong>
-            <p>{summary.hidden > 0 ? `${summary.hidden} hidden by current filters` : "All fetched rows are visible"}</p>
+            <p>{summary.hidden > 0 ? pageCopy.hiddenByFilters(summary.hidden) : pageCopy.allVisible}</p>
           </article>
           <article className="sessions-stat-card">
-            <span className="sessions-stat-card__label">Kinds</span>
+            <span className="sessions-stat-card__label">{pageCopy.kinds}</span>
             <strong className="sessions-stat-card__value">{summary.direct} / {summary.group}</strong>
-            <p>Global {summary.global} · Unknown {summary.unknown}</p>
+            <p>{pageCopy.global} {summary.global} · {pageCopy.unknown} {summary.unknown}</p>
           </article>
           <article className="sessions-stat-card">
-            <span className="sessions-stat-card__label">Active recently</span>
+            <span className="sessions-stat-card__label">{pageCopy.activeRecently}</span>
             <strong className="sessions-stat-card__value">{summary.recent}</strong>
-            <p>{summary.aborted > 0 ? `${summary.aborted} aborted rows flagged` : "No aborted rows in this view"}</p>
+            <p>{summary.aborted > 0 ? pageCopy.abortedRows(summary.aborted) : pageCopy.noAborted}</p>
           </article>
           <article className="sessions-stat-card">
-            <span className="sessions-stat-card__label">Cached tokens</span>
+            <span className="sessions-stat-card__label">{pageCopy.cachedTokens}</span>
             <strong className="sessions-stat-card__value">{summary.tokens.toLocaleString()}</strong>
-            <p>{summary.tokens > 0 ? "Token totals from session cache" : "Waiting for token-bearing rows"}</p>
+            <p>{summary.tokens > 0 ? pageCopy.tokenCacheReady : pageCopy.tokenCacheWaiting}</p>
           </article>
         </div>
 
         <div className="sessions-visual-grid">
           <section className="sessions-visual-card">
             <div className="sessions-visual-card__header">
-              <h3>Session mix</h3>
-              <p>Distribution by session kind.</p>
+              <h3>{pageCopy.sessionMixTitle}</h3>
+              <p>{pageCopy.sessionMixDetail}</p>
             </div>
             <div className="sessions-stacked-bar" aria-hidden="true">
               <span className="is-direct" style={{ width: percentage(summary.direct, chartMax) }} />
@@ -778,17 +1097,17 @@ export function SessionsPage() {
               <span className="is-unknown" style={{ width: percentage(summary.unknown, chartMax) }} />
             </div>
             <div className="sessions-legend">
-              <span><i className="is-direct" />Direct {summary.direct}</span>
-              <span><i className="is-group" />Group {summary.group}</span>
-              <span><i className="is-global" />Global {summary.global}</span>
-              <span><i className="is-unknown" />Unknown {summary.unknown}</span>
+              <span><i className="is-direct" />{pageCopy.direct} {summary.direct}</span>
+              <span><i className="is-group" />{pageCopy.group} {summary.group}</span>
+              <span><i className="is-global" />{pageCopy.global} {summary.global}</span>
+              <span><i className="is-unknown" />{pageCopy.unknown} {summary.unknown}</span>
             </div>
           </section>
 
           <section className="sessions-visual-card">
             <div className="sessions-visual-card__header">
-              <h3>Activity buckets</h3>
-              <p>Updated recency across visible rows.</p>
+              <h3>{pageCopy.activityBuckets}</h3>
+              <p>{pageCopy.activityBucketsDetail}</p>
             </div>
             <div className="sessions-bars">
               {summary.bucketCounts.map((bucket) => (
@@ -805,11 +1124,11 @@ export function SessionsPage() {
 
           <section className="sessions-visual-card">
             <div className="sessions-visual-card__header">
-              <h3>Top token sessions</h3>
-              <p>Largest cached token totals in the current view.</p>
+              <h3>{pageCopy.topTokenSessions}</h3>
+              <p>{pageCopy.topTokenSessionsDetail}</p>
             </div>
             {summary.topTokenRows.length === 0 ? (
-              <div className="sessions-empty-inline">No token totals available yet.</div>
+              <div className="sessions-empty-inline">{pageCopy.noTokenTotals}</div>
             ) : (
               <div className="sessions-bars sessions-bars--tokens">
                 {summary.topTokenRows.map((session) => (
@@ -831,26 +1150,26 @@ export function SessionsPage() {
         <section className="sessions-card sessions-card--list">
           <div className="sessions-panel-header">
             <div>
-              <div className="sessions-panel-header__title">Session list</div>
-              <div className="sessions-panel-header__sub">Grouped, searchable, and sorted like the upstream Sessions workspace.</div>
+              <div className="sessions-panel-header__title">{pageCopy.sessionListTitle}</div>
+              <div className="sessions-panel-header__sub">{pageCopy.sessionListDetail}</div>
             </div>
-            <span className="sessions-pill">{groupedSessions.length} group{groupedSessions.length === 1 ? "" : "s"}</span>
+            <span className="sessions-pill">{pageCopy.groups(groupedSessions.length)}</span>
           </div>
 
           <div className="sessions-table-head">
-            <span>Session</span>
-            <span>Status</span>
-            <span>Updated</span>
-            <span>Tokens</span>
+            <span>{pageCopy.session}</span>
+            <span>{pageCopy.status}</span>
+            <span>{pageCopy.updated}</span>
+            <span>{pageCopy.tokens}</span>
           </div>
 
           {sessionsQuery.isLoading ? (
-            <div className="sessions-state"><LoaderCircle size={16} className="spin" /> Loading sessions…</div>
+            <div className="sessions-state"><LoaderCircle size={16} className="spin" /> {pageCopy.loadingSessions}</div>
           ) : visibleSessions.length === 0 ? (
             <div className="sessions-empty-inline">
               {summary.fetched === 0
-                ? "No sessions are available for the current gateway filters."
-                : "No sessions matched the current filters."}
+                ? pageCopy.noSessionsForGateway
+                : pageCopy.noSessionsMatched}
             </div>
           ) : (
             <div className="sessions-group-list">
@@ -880,9 +1199,9 @@ export function SessionsPage() {
                             <div className="sessions-row__title-line">
                               <span className="sessions-row__title">{truncate(sessionTitle(session), 54)}</span>
                               <div className="sessions-row__pills">
-                                <span className={`sessions-kind-badge is-${session.kind}`}>{sessionKindLabel(session.kind)}</span>
-                                {activeChat && <span className="sessions-kind-badge is-active-chat">active</span>}
-                                {session.abortedLastRun && <span className="sessions-kind-badge is-danger">aborted</span>}
+                                <span className={`sessions-kind-badge is-${session.kind}`}>{sessionKindLabel(session.kind, isChinese)}</span>
+                                {activeChat && <span className="sessions-kind-badge is-active-chat">{pageCopy.active}</span>}
+                                {session.abortedLastRun && <span className="sessions-kind-badge is-danger">{pageCopy.aborted}</span>}
                               </div>
                             </div>
                             <div className="sessions-row__meta">
@@ -895,19 +1214,19 @@ export function SessionsPage() {
                           <div className="sessions-row__status">
                             <span className={`sessions-status-dot ${session.abortedLastRun ? "is-danger" : "is-ok"}`} />
                             <div>
-                              <strong>{sessionSurface(session)}</strong>
-                              <span>{truncate(sessionModel(session), 28)}</span>
+                              <strong>{sessionSurface(session, isChinese)}</strong>
+                              <span>{truncate(sessionModel(session, isChinese), 28)}</span>
                             </div>
                           </div>
 
                           <div className="sessions-row__updated">
-                            <strong>{session.updatedAt ? formatRelativeTime(session.updatedAt) : "unknown"}</strong>
-                            <span>{formatTimestamp(session.updatedAt)}</span>
+                            <strong>{session.updatedAt ? formatRelativeTime(session.updatedAt) : pageCopy.unknownTime}</strong>
+                            <span>{formatTimestamp(session.updatedAt, language, isChinese)}</span>
                           </div>
 
                           <div className="sessions-row__tokens">
                             <strong>{sessionTokenSummary(session)}</strong>
-                            <span>{sessionTokenBreakdown(session)}</span>
+                            <span>{sessionTokenBreakdown(session, isChinese)}</span>
                           </div>
                         </button>
                       );
@@ -922,16 +1241,16 @@ export function SessionsPage() {
         <section className="sessions-card sessions-card--detail">
           <div className="sessions-panel-header">
             <div>
-              <div className="sessions-panel-header__title">Session details</div>
+              <div className="sessions-panel-header__title">{pageCopy.sessionDetails}</div>
               <div className="sessions-panel-header__sub">
                 {selectedSession
-                  ? `${selectedPosition} of ${visibleSessions.length} visible sessions`
-                  : "Select a session to inspect tokens, model, timestamps, and transcript preview."}
+                  ? (isChinese ? `第 ${selectedPosition} / ${visibleSessions.length} 个可见会话` : `${selectedPosition} of ${visibleSessions.length} visible sessions`)
+                  : pageCopy.selectSessionHint}
               </div>
             </div>
             {selectedSession && (
               <span className={`sessions-pill ${selectedSession.abortedLastRun ? "is-danger" : "is-ok"}`}>
-                {selectedSession.abortedLastRun ? "Aborted" : "Available"}
+                {selectedSession.abortedLastRun ? pageCopy.aborted : pageCopy.available}
               </span>
             )}
           </div>
@@ -939,8 +1258,8 @@ export function SessionsPage() {
           {!selectedSession ? (
             <div className="sessions-empty-state">
               <FileText size={20} />
-              <strong>No session selected</strong>
-              <p>Choose a row from the list to inspect routing, overrides, and transcript preview.</p>
+              <strong>{pageCopy.noSessionSelected}</strong>
+              <p>{pageCopy.chooseSessionHint}</p>
             </div>
           ) : (
             <div className="sessions-detail-stack">
@@ -949,13 +1268,13 @@ export function SessionsPage() {
                   <div className="sessions-detail-hero__title">{sessionTitle(selectedSession)}</div>
                   <div className="sessions-detail-hero__subtitle sessions-mono">{selectedSession.key}</div>
                   <div className="sessions-detail-hero__meta">
-                    <span>{selectedSession.updatedAt ? formatRelativeTime(selectedSession.updatedAt) : "Timestamp unavailable"}</span>
-                    <span>{sessionSurface(selectedSession)}</span>
+                    <span>{selectedSession.updatedAt ? formatRelativeTime(selectedSession.updatedAt) : pageCopy.timestampUnavailable}</span>
+                    <span>{sessionSurface(selectedSession, isChinese)}</span>
                     <span>{sessionRoute(selectedSession)}</span>
-                    <span>{sessionModel(selectedSession)}</span>
+                    <span>{sessionModel(selectedSession, isChinese)}</span>
                   </div>
                   <div className="sessions-detail-facts">
-                    {sessionFacts(selectedSession).map((fact) => (
+                    {sessionFacts(selectedSession, isChinese).map((fact) => (
                       <span key={`${selectedSession.key}-${fact}`} className="sessions-fact-pill">{fact}</span>
                     ))}
                   </div>
@@ -968,7 +1287,7 @@ export function SessionsPage() {
                     onClick={openInChat}
                     disabled={!canOpenInChat}
                   >
-                    Open in Chat
+                    {pageCopy.openInChat}
                     <ArrowRight size={14} />
                   </button>
                   <button
@@ -980,110 +1299,110 @@ export function SessionsPage() {
                     }}
                   >
                     <PencilLine size={14} />
-                    Rename
+                    {pageCopy.rename}
                   </button>
                   <button
                     type="button"
                     className="sessions-btn sessions-btn--ghost sessions-btn--sm"
                     onClick={() => removeSession(true)}
                     disabled={busyAction !== null || selectedSession.kind === "global"}
-                    title="Archive transcript and remove the session entry"
+                    title={pageCopy.archiveTitle}
                   >
                     {busyAction === "archive" ? <LoaderCircle size={14} className="spin" /> : <Archive size={14} />}
-                    Archive
+                    {pageCopy.archive}
                   </button>
                   <button
                     type="button"
                     className="sessions-btn sessions-btn--danger sessions-btn--sm"
                     onClick={() => removeSession(false)}
                     disabled={busyAction !== null || selectedSession.kind === "global"}
-                    title="Remove the session entry without archiving transcript files"
+                    title={pageCopy.deleteTitle}
                   >
                     {busyAction === "delete" ? <LoaderCircle size={14} className="spin" /> : <Trash2 size={14} />}
-                    Delete Row
+                    {pageCopy.deleteRow}
                   </button>
                 </div>
               </section>
 
               <div className="sessions-detail-metrics">
                 <article className="sessions-detail-metric">
-                  <span>Tokens</span>
+                  <span>{pageCopy.tokens}</span>
                   <strong>{sessionTokenSummary(selectedSession)}</strong>
-                  <p>{sessionTokenBreakdown(selectedSession)}</p>
+                  <p>{sessionTokenBreakdown(selectedSession, isChinese)}</p>
                 </article>
                 <article className="sessions-detail-metric">
-                  <span>Updated</span>
+                  <span>{pageCopy.updated}</span>
                   <strong>{selectedSession.updatedAt ? formatRelativeTime(selectedSession.updatedAt) : "—"}</strong>
-                  <p>{formatTimestamp(selectedSession.updatedAt)}</p>
+                  <p>{formatTimestamp(selectedSession.updatedAt, language, isChinese)}</p>
                 </article>
                 <article className="sessions-detail-metric">
-                  <span>Transcript rows</span>
+                  <span>{pageCopy.transcriptRows}</span>
                   <strong>{transcriptItems.length.toLocaleString()}</strong>
-                  <p>{transcriptStatusLabel(transcriptStatus)}</p>
+                  <p>{transcriptStatusLabel(transcriptStatus, isChinese)}</p>
                 </article>
                 <article className="sessions-detail-metric">
-                  <span>Response usage</span>
-                  <strong>{selectedSession.responseUsage ?? "inherit"}</strong>
-                  <p>{selectedSession.totalTokensFresh === false ? "cached total may be stale" : "token cache looks fresh"}</p>
+                  <span>{pageCopy.responseUsage}</span>
+                  <strong>{selectedSession.responseUsage ?? pageCopy.inherit}</strong>
+                  <p>{selectedSession.totalTokensFresh === false ? pageCopy.cachedTotalMayBeStale : pageCopy.tokenCacheFresh}</p>
                 </article>
               </div>
 
               <div className="sessions-detail-grid">
                 <section className="sessions-detail-card">
                   <div className="sessions-detail-card__header">
-                    <h3>Resolved defaults</h3>
-                    <p>Workspace-level session defaults from the gateway.</p>
+                    <h3>{pageCopy.resolvedDefaults}</h3>
+                    <p>{pageCopy.resolvedDefaultsDetail}</p>
                   </div>
                   <div className="sessions-kv-list">
-                    <div className="sessions-kv-row"><span>Provider</span><strong>{sessionsQuery.data?.defaults.modelProvider ?? "inherit"}</strong></div>
-                    <div className="sessions-kv-row"><span>Model</span><strong>{sessionsQuery.data?.defaults.model ?? "inherit"}</strong></div>
-                    <div className="sessions-kv-row"><span>Context</span><strong>{sessionsQuery.data?.defaults.contextTokens ?? "inherit"}</strong></div>
-                    <div className="sessions-kv-row"><span>Store</span><strong>{sourceLabel}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.providerLabel}</span><strong>{sessionsQuery.data?.defaults.modelProvider ?? pageCopy.inherit}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.modelLabel}</span><strong>{sessionsQuery.data?.defaults.model ?? pageCopy.inherit}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.contextLabel}</span><strong>{sessionsQuery.data?.defaults.contextTokens ?? pageCopy.inherit}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.storeLabel}</span><strong>{sourceLabel}</strong></div>
                   </div>
                 </section>
 
                 <section className="sessions-detail-card">
                   <div className="sessions-detail-card__header">
-                    <h3>Resolved session</h3>
-                    <p>Model, policy, and session-scoped identity.</p>
+                    <h3>{pageCopy.resolvedSession}</h3>
+                    <p>{pageCopy.resolvedSessionDetail}</p>
                   </div>
                   <div className="sessions-kv-list">
-                    <div className="sessions-kv-row"><span>Provider</span><strong>{selectedSession.modelProvider ?? "inherit"}</strong></div>
-                    <div className="sessions-kv-row"><span>Model</span><strong>{selectedSession.model ?? "inherit"}</strong></div>
-                    <div className="sessions-kv-row"><span>Context</span><strong>{selectedSession.contextTokens ?? sessionsQuery.data?.defaults.contextTokens ?? "inherit"}</strong></div>
-                    <div className="sessions-kv-row"><span>Privileges</span><strong>{selectedSession.elevatedLevel ?? "standard"}</strong></div>
-                    <div className="sessions-kv-row"><span>Send policy</span><strong>{selectedSession.sendPolicy ?? "allow"}</strong></div>
-                    <div className="sessions-kv-row"><span>Response usage</span><strong>{selectedSession.responseUsage ?? "inherit"}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.providerLabel}</span><strong>{selectedSession.modelProvider ?? pageCopy.inherit}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.modelLabel}</span><strong>{selectedSession.model ?? pageCopy.inherit}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.contextLabel}</span><strong>{selectedSession.contextTokens ?? sessionsQuery.data?.defaults.contextTokens ?? pageCopy.inherit}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.privilegesLabel}</span><strong>{selectedSession.elevatedLevel ?? pageCopy.standard}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.sendPolicyLabel}</span><strong>{selectedSession.sendPolicy ?? pageCopy.allow}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.responseUsage}</span><strong>{selectedSession.responseUsage ?? pageCopy.inherit}</strong></div>
                   </div>
                 </section>
 
                 <section className="sessions-detail-card">
                   <div className="sessions-detail-card__header">
-                    <h3>Routing</h3>
-                    <p>Agent, surface, room, and delivery targeting.</p>
+                    <h3>{pageCopy.routing}</h3>
+                    <p>{pageCopy.routingDetail}</p>
                   </div>
                   <div className="sessions-kv-list">
-                    <div className="sessions-kv-row"><span>Agent</span><strong>{parseSessionAgentId(selectedSession.key) ?? "n/a"}</strong></div>
-                    <div className="sessions-kv-row"><span>Session ID</span><strong>{selectedSession.sessionId ?? "unknown"}</strong></div>
-                    <div className="sessions-kv-row"><span>Surface</span><strong>{sessionSurface(selectedSession)}</strong></div>
-                    <div className="sessions-kv-row"><span>Route</span><strong>{sessionRoute(selectedSession)}</strong></div>
-                    <div className="sessions-kv-row"><span>Last channel</span><strong>{selectedSession.lastChannel ?? selectedSession.deliveryContext?.channel ?? "—"}</strong></div>
-                    <div className="sessions-kv-row"><span>Last recipient</span><strong>{selectedSession.lastTo ?? selectedSession.deliveryContext?.to ?? "—"}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.agentLabel}</span><strong>{parseSessionAgentId(selectedSession.key) ?? pageCopy.notAvailable}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.sessionIdLabel}</span><strong>{selectedSession.sessionId ?? pageCopy.unknown}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.surfaceLabel}</span><strong>{sessionSurface(selectedSession, isChinese)}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.routeLabel}</span><strong>{sessionRoute(selectedSession)}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.lastChannelLabel}</span><strong>{selectedSession.lastChannel ?? selectedSession.deliveryContext?.channel ?? "—"}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.lastRecipientLabel}</span><strong>{selectedSession.lastTo ?? selectedSession.deliveryContext?.to ?? "—"}</strong></div>
                   </div>
                 </section>
 
                 <section className="sessions-detail-card">
                   <div className="sessions-detail-card__header">
-                    <h3>Usage</h3>
-                    <p>Cached usage counters and origin metadata.</p>
+                    <h3>{pageCopy.usage}</h3>
+                    <p>{pageCopy.usageDetail}</p>
                   </div>
                   <div className="sessions-kv-list">
-                    <div className="sessions-kv-row"><span>Input</span><strong>{formatTokenCount(selectedSession.inputTokens)}</strong></div>
-                    <div className="sessions-kv-row"><span>Output</span><strong>{formatTokenCount(selectedSession.outputTokens)}</strong></div>
-                    <div className="sessions-kv-row"><span>Total</span><strong>{sessionTokenSummary(selectedSession)}</strong></div>
-                    <div className="sessions-kv-row"><span>Origin</span><strong>{selectedSession.originLabel ?? (selectedSession.systemSent ? "system" : "user")}</strong></div>
-                    <div className="sessions-kv-row"><span>Account</span><strong>{selectedSession.lastAccountId ?? selectedSession.deliveryContext?.accountId ?? "—"}</strong></div>
-                    <div className="sessions-kv-row"><span>Token cache</span><strong>{selectedSession.totalTokensFresh === false ? "stale" : "fresh"}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.inputLabel}</span><strong>{formatTokenCount(selectedSession.inputTokens)}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.outputLabel}</span><strong>{formatTokenCount(selectedSession.outputTokens)}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.totalLabel}</span><strong>{sessionTokenSummary(selectedSession)}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.originLabel}</span><strong>{selectedSession.originLabel ?? (selectedSession.systemSent ? pageCopy.system : pageCopy.user)}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.accountLabel}</span><strong>{selectedSession.lastAccountId ?? selectedSession.deliveryContext?.accountId ?? "—"}</strong></div>
+                    <div className="sessions-kv-row"><span>{pageCopy.tokenCacheLabel}</span><strong>{selectedSession.totalTokensFresh === false ? pageCopy.stale : pageCopy.fresh}</strong></div>
                   </div>
                 </section>
               </div>
@@ -1091,8 +1410,8 @@ export function SessionsPage() {
               <section className="sessions-detail-card sessions-detail-card--full">
                 <div className="sessions-detail-card__header sessions-detail-card__header--actions">
                   <div>
-                    <h3>Overrides</h3>
-                    <p>Rename, patch per-session overrides, or reset the session while keeping workspace defaults.</p>
+                    <h3>{pageCopy.overrides}</h3>
+                    <p>{pageCopy.overridesDetail}</p>
                   </div>
                   <div className="sessions-detail-actions">
                     <button
@@ -1102,7 +1421,7 @@ export function SessionsPage() {
                       disabled={busyAction !== null}
                     >
                       {busyAction === "reset" ? <LoaderCircle size={14} className="spin" /> : <RotateCcw size={14} />}
-                      Reset
+                      {pageCopy.reset}
                     </button>
                     <button
                       type="button"
@@ -1111,7 +1430,7 @@ export function SessionsPage() {
                       disabled={busyAction !== null || !renameChanged}
                     >
                       {busyAction === "rename" ? <LoaderCircle size={14} className="spin" /> : <PencilLine size={14} />}
-                      Rename
+                      {pageCopy.rename}
                     </button>
                     <button
                       type="button"
@@ -1120,24 +1439,24 @@ export function SessionsPage() {
                       disabled={busyAction !== null || !draftChanged}
                     >
                       {busyAction === "save" ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />}
-                      Save Overrides
+                      {pageCopy.saveOverrides}
                     </button>
                   </div>
                 </div>
 
                 <div className="sessions-editor-grid">
                   <label className="sessions-field sessions-field--full">
-                    <span>Label</span>
+                    <span>{pageCopy.label}</span>
                     <input
                       ref={labelInputRef}
                       value={draft.label}
                       onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
-                      placeholder="Optional label override"
+                      placeholder={pageCopy.optionalLabelOverride}
                     />
                   </label>
 
                   <label className="sessions-field">
-                    <span>Thinking Level</span>
+                    <span>{pageCopy.thinkingLevel}</span>
                     <select
                       value={resolveThinkLevelDisplay(
                         draft.thinkingLevel,
@@ -1146,31 +1465,43 @@ export function SessionsPage() {
                       onChange={(event) => setDraft((current) => ({ ...current, thinkingLevel: event.target.value }))}
                     >
                       {thinkLevels.map((level) => (
-                        <option key={level || "inherit"} value={level}>{level || "inherit"}</option>
+                        <option key={level || "inherit"} value={level}>{level || pageCopy.inherit}</option>
                       ))}
                     </select>
                   </label>
 
                   <label className="sessions-field">
-                    <span>Verbose Level</span>
+                    <span>{pageCopy.verboseLevel}</span>
                     <select
                       value={draft.verboseLevel}
                       onChange={(event) => setDraft((current) => ({ ...current, verboseLevel: event.target.value }))}
                     >
                       {verboseLevels.map((level) => (
-                        <option key={level.value || "inherit"} value={level.value}>{level.label}</option>
+                        <option key={level.value || "inherit"} value={level.value}>
+                          {level.value
+                            ? (isChinese
+                              ? level.value === "off"
+                                ? "关闭（显式）"
+                                : level.value === "on"
+                                  ? "开启"
+                                  : level.value === "full"
+                                    ? "完整"
+                                    : level.label
+                              : level.label)
+                            : pageCopy.inherit}
+                        </option>
                       ))}
                     </select>
                   </label>
 
                   <label className="sessions-field">
-                    <span>Reasoning Level</span>
+                    <span>{pageCopy.reasoningLevel}</span>
                     <select
                       value={draft.reasoningLevel}
                       onChange={(event) => setDraft((current) => ({ ...current, reasoningLevel: event.target.value }))}
                     >
                       {reasoningLevels.map((level) => (
-                        <option key={level || "inherit"} value={level}>{level || "inherit"}</option>
+                        <option key={level || "inherit"} value={level}>{level || pageCopy.inherit}</option>
                       ))}
                     </select>
                   </label>
@@ -1180,17 +1511,17 @@ export function SessionsPage() {
               <section className="sessions-detail-card sessions-detail-card--full">
                 <div className="sessions-detail-card__header">
                   <div>
-                    <h3>Transcript preview</h3>
-                    <p>{transcriptStatusLabel(transcriptStatus)} · {transcriptSourceLabel(transcriptSource)} source</p>
+                    <h3>{pageCopy.transcriptPreview}</h3>
+                    <p>{transcriptStatusLabel(transcriptStatus, isChinese)} · {transcriptSourceLabel(transcriptSource, isChinese)} {pageCopy.transcriptSourceSuffix}</p>
                   </div>
                 </div>
 
                 {transcriptQuery.isLoading ? (
-                  <div className="sessions-state"><LoaderCircle size={16} className="spin" /> Loading transcript preview…</div>
+                  <div className="sessions-state"><LoaderCircle size={16} className="spin" /> {pageCopy.loadingTranscript}</div>
                 ) : transcriptQuery.error ? (
                   <div className="sessions-callout is-danger">{String(transcriptQuery.error)}</div>
                 ) : transcriptItems.length === 0 ? (
-                  <div className="sessions-empty-inline">{transcriptStatusLabel(transcriptStatus)}</div>
+                  <div className="sessions-empty-inline">{transcriptStatusLabel(transcriptStatus, isChinese)}</div>
                 ) : (
                   <div className="sessions-preview-list">
                     {transcriptItems.map((item, index) => (

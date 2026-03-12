@@ -356,6 +356,40 @@ export function formatBoolean(value: boolean | null | undefined) {
   return value ? "Yes" : "No";
 }
 
+const RECENT_ACTIVITY_THRESHOLD_MS = 10 * 60 * 1000;
+
+export function hasRecentActivity(account: ChannelAccountSnapshot): boolean {
+  if (!account.lastInboundAt) {
+    return false;
+  }
+  return Date.now() - account.lastInboundAt < RECENT_ACTIVITY_THRESHOLD_MS;
+}
+
+export function deriveRunningStatus(account: ChannelAccountSnapshot): "Yes" | "No" | "Active" {
+  if (account.running) {
+    return "Yes";
+  }
+  if (hasRecentActivity(account)) {
+    return "Active";
+  }
+  return "No";
+}
+
+export function deriveConnectedStatus(
+  account: ChannelAccountSnapshot,
+): "Yes" | "No" | "Active" | "n/a" {
+  if (account.connected === true) {
+    return "Yes";
+  }
+  if (account.connected === false) {
+    return "No";
+  }
+  if (hasRecentActivity(account)) {
+    return "Active";
+  }
+  return "n/a";
+}
+
 export function formatMaybeNumber(value: number | null | undefined) {
   return value == null ? "n/a" : value.toLocaleString();
 }

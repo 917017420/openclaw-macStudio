@@ -1,4 +1,5 @@
 import type { ConnectionState } from "@/lib/gateway/types";
+import { useAppPreferencesStore, isChineseLanguage } from "@/features/preferences/store";
 
 interface StatusBadgeProps {
   status: ConnectionState | "running" | "idle" | "error";
@@ -19,8 +20,28 @@ const statusConfig: Record<string, { color: string; label: string }> = {
 };
 
 export function StatusBadge({ status, label, size = "sm" }: StatusBadgeProps) {
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
   const config = statusConfig[status] ?? statusConfig.disconnected;
-  const displayLabel = label ?? config.label;
+  const localizeLabel = (value: string) =>
+    isChinese
+      ? ({
+          Connected: "已连接",
+          Connecting: "连接中",
+          Authenticating: "认证中",
+          Reconnecting: "重连中",
+          "Pairing Required": "等待配对",
+          Disconnected: "未连接",
+          Error: "错误",
+          Running: "运行中",
+          Idle: "空闲",
+          Linked: "已绑定",
+          "Not linked": "未绑定",
+          Invalid: "无效",
+          Ready: "就绪",
+        }[value] ?? value)
+      : value;
+  const displayLabel = localizeLabel(label ?? config.label);
 
   return (
     <div className={`inline-flex items-center gap-1.5 ${size === "sm" ? "text-xs" : "text-sm"}`}>

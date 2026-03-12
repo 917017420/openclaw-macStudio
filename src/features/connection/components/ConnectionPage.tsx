@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, Trash2, Wifi, WifiOff } from "lucide-react";
 import { Button, Input, Card, StatusBadge } from "@/components/ui";
 import { useConnectionStore } from "@/features/connection/store";
+import { useAppPreferencesStore, isChineseLanguage } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import type { GatewayConfig } from "@/lib/gateway/types";
 
@@ -25,16 +26,71 @@ export function ConnectionPage() {
   const [isConnecting, setIsConnecting] = useState(false);
   const runtimeContext = gateway.runtimeContext;
   const handshakeTrace = gateway.recentHandshakeTrace;
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const copy = isChinese
+    ? {
+        title: "网关连接",
+        subtitle: "连接到你的 OpenClaw Gateway 服务",
+        runtimeDiagnostics: "运行时诊断",
+        runtimeDiagnosticsDetail: "展示当前 Tauri/WebView 环境以及最近一次网关握手轨迹。",
+        labels: {
+          client: "客户端",
+          origin: "WebView 来源",
+          href: "WebView 地址",
+          protocol: "协议",
+          host: "主机",
+          baseUri: "基础 URI",
+          userAgent: "用户代理",
+          platform: "平台",
+          tauriDetected: "检测到 Tauri",
+          wsOriginHeader: "WS Origin 头",
+          transport: "传输层",
+        },
+        yes: "是",
+        no: "否",
+        handshakeTrace: "握手轨迹",
+        noConnectionAttempts: "暂时还没有捕获到连接尝试。",
+        addGateway: "添加网关",
+        disconnect: "断开连接",
+        connect: "连接",
+      }
+    : {
+        title: "Gateway Connection",
+        subtitle: "Connect to your OpenClaw Gateway server",
+        runtimeDiagnostics: "Runtime Diagnostics",
+        runtimeDiagnosticsDetail: "Active Tauri/WebView context and the latest gateway handshake trace.",
+        labels: {
+          client: "Client",
+          origin: "WebView origin",
+          href: "WebView href",
+          protocol: "Protocol",
+          host: "Host",
+          baseUri: "Base URI",
+          userAgent: "User agent",
+          platform: "Platform",
+          tauriDetected: "Tauri detected",
+          wsOriginHeader: "WS Origin header",
+          transport: "Transport",
+        },
+        yes: "yes",
+        no: "no",
+        handshakeTrace: "Handshake trace",
+        noConnectionAttempts: "No connection attempts captured yet.",
+        addGateway: "Add Gateway",
+        disconnect: "Disconnect",
+        connect: "Connect",
+      };
 
   return (
     <div className="mx-auto max-w-2xl p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-text-primary">
-            Gateway Connection
+            {copy.title}
           </h2>
           <p className="mt-1 text-sm text-text-secondary">
-            Connect to your OpenClaw Gateway server
+            {copy.subtitle}
           </p>
         </div>
         <StatusBadge status={state} size="md" />
@@ -75,27 +131,27 @@ export function ConnectionPage() {
       </div>
 
       <Card className="mb-4">
-        <h3 className="text-sm font-semibold text-text-primary">Runtime Diagnostics</h3>
+        <h3 className="text-sm font-semibold text-text-primary">{copy.runtimeDiagnostics}</h3>
         <p className="mt-1 text-xs text-text-secondary">
-          Active Tauri/WebView context and the latest gateway handshake trace.
+          {copy.runtimeDiagnosticsDetail}
         </p>
 
         <div className="mt-4 space-y-2 text-xs">
-          <DiagnosticRow label="Client" value={`${runtimeContext.clientId} / ${runtimeContext.clientMode}`} />
-          <DiagnosticRow label="WebView origin" value={formatDiagnosticValue(runtimeContext.locationOrigin)} />
-          <DiagnosticRow label="WebView href" value={formatDiagnosticValue(runtimeContext.locationHref)} />
-          <DiagnosticRow label="Protocol" value={formatDiagnosticValue(runtimeContext.locationProtocol)} />
-          <DiagnosticRow label="Host" value={formatDiagnosticValue(runtimeContext.locationHost)} />
-          <DiagnosticRow label="Base URI" value={formatDiagnosticValue(runtimeContext.documentBaseUri)} />
-          <DiagnosticRow label="User agent" value={formatDiagnosticValue(runtimeContext.userAgent)} />
-          <DiagnosticRow label="Platform" value={formatDiagnosticValue(runtimeContext.platform)} />
-          <DiagnosticRow label="Tauri detected" value={runtimeContext.tauriDetected ? "yes" : "no"} />
-          <DiagnosticRow label="WS Origin header" value={formatDiagnosticValue(runtimeContext.explicitOriginHeader)} />
-          <DiagnosticRow label="Transport" value={runtimeContext.socketTransport} />
+          <DiagnosticRow label={copy.labels.client} value={`${runtimeContext.clientId} / ${runtimeContext.clientMode}`} />
+          <DiagnosticRow label={copy.labels.origin} value={formatDiagnosticValue(runtimeContext.locationOrigin)} />
+          <DiagnosticRow label={copy.labels.href} value={formatDiagnosticValue(runtimeContext.locationHref)} />
+          <DiagnosticRow label={copy.labels.protocol} value={formatDiagnosticValue(runtimeContext.locationProtocol)} />
+          <DiagnosticRow label={copy.labels.host} value={formatDiagnosticValue(runtimeContext.locationHost)} />
+          <DiagnosticRow label={copy.labels.baseUri} value={formatDiagnosticValue(runtimeContext.documentBaseUri)} />
+          <DiagnosticRow label={copy.labels.userAgent} value={formatDiagnosticValue(runtimeContext.userAgent)} />
+          <DiagnosticRow label={copy.labels.platform} value={formatDiagnosticValue(runtimeContext.platform)} />
+          <DiagnosticRow label={copy.labels.tauriDetected} value={runtimeContext.tauriDetected ? copy.yes : copy.no} />
+          <DiagnosticRow label={copy.labels.wsOriginHeader} value={formatDiagnosticValue(runtimeContext.explicitOriginHeader)} />
+          <DiagnosticRow label={copy.labels.transport} value={runtimeContext.socketTransport} />
         </div>
 
         <div className="mt-4">
-          <p className="text-xs font-medium text-text-primary">Handshake trace</p>
+          <p className="text-xs font-medium text-text-primary">{copy.handshakeTrace}</p>
           <pre className="code-block code-block--compact mt-2 max-h-64 overflow-auto">{handshakeTrace.length > 0
             ? handshakeTrace
                 .map((entry) => {
@@ -103,7 +159,7 @@ export function ConnectionPage() {
                   return `${time}  ${entry.stage}${entry.detail ? `  ${entry.detail}` : ""}`;
                 })
                 .join("\n")
-            : "No connection attempts captured yet."}</pre>
+            : copy.noConnectionAttempts}</pre>
         </div>
       </Card>
 
@@ -123,7 +179,7 @@ export function ConnectionPage() {
           className="w-full"
         >
           <Plus size={16} />
-          Add Gateway
+          {copy.addGateway}
         </Button>
       )}
     </div>
@@ -164,6 +220,8 @@ function GatewayConfigCard({
   onDisconnect: () => void;
   onRemove: () => void;
 }) {
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
   return (
     <Card active={isActive} className="flex items-center justify-between">
       <div className="flex-1">
@@ -174,7 +232,7 @@ function GatewayConfigCard({
         {isConnected ? (
           <Button variant="secondary" size="sm" onClick={onDisconnect}>
             <WifiOff size={14} />
-            Disconnect
+            {isChinese ? "断开连接" : "Disconnect"}
           </Button>
         ) : (
           <Button
@@ -184,7 +242,7 @@ function GatewayConfigCard({
             onClick={onConnect}
           >
             <Wifi size={14} />
-            Connect
+            {isChinese ? "连接" : "Connect"}
           </Button>
         )}
         <Button
@@ -211,14 +269,16 @@ function AddConfigForm({
   const [url, setUrl] = useState("wss://");
   const [token, setToken] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
-    if (!name.trim()) newErrors.name = "Name is required";
+    if (!name.trim()) newErrors.name = isChinese ? "名称不能为空" : "Name is required";
     if (!url.trim() || (!url.startsWith("wss://") && !url.startsWith("ws://"))) {
-      newErrors.url = "Valid WebSocket URL required (wss:// or ws://)";
+      newErrors.url = isChinese ? "请输入有效的 WebSocket 地址（wss:// 或 ws://）" : "Valid WebSocket URL required (wss:// or ws://)";
     }
-    if (!token.trim()) newErrors.token = "Token is required";
+    if (!token.trim()) newErrors.token = isChinese ? "令牌不能为空" : "Token is required";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -231,28 +291,28 @@ function AddConfigForm({
   return (
     <Card>
       <h3 className="mb-4 text-sm font-semibold text-text-primary">
-        Add Gateway Configuration
+        {isChinese ? "添加网关配置" : "Add Gateway Configuration"}
       </h3>
       <div className="space-y-3">
         <Input
-          label="Name"
-          placeholder="My Gateway Server"
+          label={isChinese ? "名称" : "Name"}
+          placeholder={isChinese ? "我的网关服务" : "My Gateway Server"}
           value={name}
           onChange={(e) => setName(e.target.value)}
           error={errors.name}
         />
         <Input
-          label="Gateway URL"
-          placeholder="wss://your-server:18789"
+          label={isChinese ? "网关地址" : "Gateway URL"}
+          placeholder={isChinese ? "wss://你的服务:18789" : "wss://your-server:18789"}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           error={errors.url}
-          hint="WebSocket address of your OpenClaw Gateway"
+          hint={isChinese ? "你的 OpenClaw Gateway WebSocket 地址" : "WebSocket address of your OpenClaw Gateway"}
         />
         <Input
-          label="Token"
+          label={isChinese ? "令牌" : "Token"}
           type="password"
-          placeholder="Your Gateway token"
+          placeholder={isChinese ? "你的网关令牌" : "Your Gateway token"}
           value={token}
           onChange={(e) => setToken(e.target.value)}
           error={errors.token}
@@ -260,10 +320,10 @@ function AddConfigForm({
       </div>
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel}>
-          Cancel
+          {isChinese ? "取消" : "Cancel"}
         </Button>
         <Button onClick={handleSubmit}>
-          Add Gateway
+          {isChinese ? "添加网关" : "Add Gateway"}
         </Button>
       </div>
     </Card>

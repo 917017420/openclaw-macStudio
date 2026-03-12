@@ -1,6 +1,7 @@
 import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useConnectionStore } from "@/features/connection/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 
 type WindowControls = Pick<
   ReturnType<typeof getCurrentWindow>,
@@ -21,25 +22,27 @@ function resolveWindowControls(): WindowControls {
   }
 }
 
-function statusText(state: string): string {
+function statusText(state: string, isChinese: boolean): string {
   switch (state) {
     case "connected":
-      return "Connected";
+      return isChinese ? "已连接" : "Connected";
     case "connecting":
-      return "Connecting";
+      return isChinese ? "连接中" : "Connecting";
     case "reconnecting":
-      return "Reconnecting";
+      return isChinese ? "重连中" : "Reconnecting";
     case "pairing_required":
-      return "Pairing Required";
+      return isChinese ? "等待配对" : "Pairing Required";
     case "error":
-      return "Error";
+      return isChinese ? "错误" : "Error";
     default:
-      return "Disconnected";
+      return isChinese ? "未连接" : "Disconnected";
   }
 }
 
 export function TitleBar() {
   const state = useConnectionStore((s) => s.state);
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
   const appWindow = resolveWindowControls();
   const dotClass =
     state === "connected"
@@ -59,7 +62,7 @@ export function TitleBar() {
         </div>
         <span className="topbar-status-pill">
           <span className={dotClass} />
-          <span>{statusText(state)}</span>
+          <span>{statusText(state, isChinese)}</span>
         </span>
       </div>
 

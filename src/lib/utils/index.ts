@@ -1,12 +1,16 @@
+import { getInitialAppLanguage, useAppPreferencesStore } from "@/features/preferences/store";
+
 /** Format a timestamp to relative time string */
 export function formatRelativeTime(timestamp: number): string {
+  const locale = useAppPreferencesStore.getState().language || getInitialAppLanguage();
   const now = Date.now();
   const diff = now - timestamp;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
 
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return new Date(timestamp).toLocaleDateString();
+  if (diff < 60_000) return rtf.format(-Math.floor(diff / 1_000), "second");
+  if (diff < 3_600_000) return rtf.format(-Math.floor(diff / 60_000), "minute");
+  if (diff < 86_400_000) return rtf.format(-Math.floor(diff / 3_600_000), "hour");
+  return new Date(timestamp).toLocaleDateString(locale);
 }
 
 /** Truncate string with ellipsis */

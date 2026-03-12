@@ -22,6 +22,7 @@ import { useModels } from "@/features/chat/hooks/useModels";
 import { useAgentsDirectory } from "@/features/chat/hooks/useAgents";
 import { useConnectionStore } from "@/features/connection/store";
 import { useChatStore } from "@/features/chat/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import type { Agent } from "@/lib/gateway";
 import { formatRelativeTime, truncate } from "@/lib/utils";
@@ -529,6 +530,139 @@ function emptyAgentForm(defaultWorkspace: string) {
 }
 
 export function AgentsPage() {
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const pageCopy = isChinese
+    ? {
+        title: "智能体",
+        emptySubtitle: "先连接网关，再查看、创建、编辑和管理智能体。",
+        eyebrow: "控制台",
+        subtitle: "官方风格的智能体工作区，包含列表管理、配置编辑、文件、工具和技能面板。",
+        refresh: "刷新",
+        newAgent: "新建智能体",
+        openChat: "打开聊天",
+        sortAgents: "智能体排序",
+        defaultFirst: "默认优先",
+        name: "名称",
+        id: "ID",
+        status: "状态",
+        loadingAgents: "正在加载智能体…",
+        noAgentsMatched: "没有智能体匹配当前筛选条件。",
+        noAgentsReturned: "网关没有返回任何智能体。",
+        workspacePending: "工作区待加载",
+        defaultTag: "默认",
+        createAgent: "创建智能体",
+        createAgentDetail: "通过 `agents.create` 添加新条目，然后可选地应用模型覆盖。",
+        workspace: "工作区",
+        model: "模型",
+        avatar: "头像",
+        emoji: "表情",
+        createAgentButton: "创建智能体",
+        cancel: "取消",
+        noAgentSelected: "未选择智能体",
+        noAgentSelectedHint: "创建一个新智能体，或从侧栏选择一个来查看文件、工具和技能。",
+        overviewTab: "概览",
+        filesTab: "文件",
+        toolsTab: "工具",
+        skillsTab: "技能",
+        configIssues: (count: number) => `当前网关配置存在校验问题${count > 0 ? `（${count}）` : ""}，修复前智能体编辑能力可能受限。`,
+        configuredFromList: (count: number) => `来自 \`agents.list\` 的 ${count} 个配置项。`,
+        shownCount: (count: number) => `显示 ${count} 个`,
+        filterPlaceholder: "按 ID、名称、描述筛选",
+        createAgentHint: "通过官方工作区流程创建新智能体。名称和工作区为必填项。",
+        createNamePlaceholder: "研究助理",
+        createWorkspacePlaceholder: "~/openclaw/agents/research",
+        createModelPlaceholder: "openai/gpt-5",
+        createAvatarPlaceholder: "🤖 或头像标签",
+        createEmojiPlaceholder: "🧠",
+        createFormHint: "`agents.create` 支持 `name`、`workspace`、`emoji` 和 `avatar`。如果这里填写模型，页面会追加一次 `agents.update` 调用来应用它。",
+        editAgent: "编辑智能体",
+        agentConfig: "智能体配置",
+        updateAgentDetail: "通过 `agents.update` 更新当前智能体。",
+        agentConfigDetail: "与网关配置对齐的名称、工作区、模型和头像。",
+        statusPolicy: "状态与策略",
+        statusPolicyDetail: "网关上报的运行状态、默认值和能力元数据。",
+        filesSnapshot: "文件快照",
+        filesSnapshotDetail: "不离开当前页面即可浏览和编辑核心工作区文件。",
+        skillsSnapshot: "技能快照",
+        skillsSnapshotDetail: "当前智能体的技能资格、安装提示和配置就绪情况。",
+        coreFiles: "核心文件",
+        toolCatalog: "工具目录",
+        toolCatalogDetail: "按官方 WebUI 结构分组的运行时工具目录。",
+        agentSkills: "智能体技能",
+        install: "安装",
+        enable: "启用",
+        disable: "停用",
+        saveKey: "保存 Key",
+        saveEnvOverrides: "保存环境变量覆盖",
+        noCapabilities: "未上报能力元数据。",
+        noDescription: "网关没有为该智能体返回显式描述。可在下方配置区更新显示名称、工作区、模型和头像。",
+      }
+    : {
+        title: "Agents",
+        emptySubtitle: "Connect a gateway to inspect, create, edit, and manage agents.",
+        eyebrow: "Control Surface",
+        subtitle: "Official-style agent workspace with list management, config editing, files, tools, and skills panels.",
+        refresh: "Refresh",
+        newAgent: "New Agent",
+        openChat: "Open Chat",
+        sortAgents: "Sort agents",
+        defaultFirst: "Default first",
+        name: "Name",
+        id: "ID",
+        status: "Status",
+        loadingAgents: "Loading agents…",
+        noAgentsMatched: "No agents matched the current filter.",
+        noAgentsReturned: "No agents were returned from `agents.list`.",
+        workspacePending: "workspace pending",
+        defaultTag: "default",
+        createAgent: "Create Agent",
+        createAgentDetail: "Add a new entry through `agents.create`, then optionally apply model overrides.",
+        workspace: "Workspace",
+        model: "Model",
+        avatar: "Avatar",
+        emoji: "Emoji",
+        createAgentButton: "Create Agent",
+        cancel: "Cancel",
+        noAgentSelected: "No agent selected",
+        noAgentSelectedHint: "Create a new agent or choose one from the sidebar to inspect files, tools, and skills.",
+        overviewTab: "Overview",
+        filesTab: "Files",
+        toolsTab: "Tools",
+        skillsTab: "Skills",
+        configIssues: (count: number) => `Gateway config currently reports validation issues${count > 0 ? ` (${count})` : ""}. Agent edits may be partially constrained until the config is fixed.`,
+        configuredFromList: (count: number) => `${count} configured from \`agents.list\`.`,
+        shownCount: (count: number) => `${count} shown`,
+        filterPlaceholder: "Filter by id, name, description",
+        createAgentHint: "Create a new agent from the official workspace flow. Name and workspace are required.",
+        createNamePlaceholder: "Research Assistant",
+        createWorkspacePlaceholder: "~/openclaw/agents/research",
+        createModelPlaceholder: "openai/gpt-5",
+        createAvatarPlaceholder: "🤖 or avatar label",
+        createEmojiPlaceholder: "🧠",
+        createFormHint: "`agents.create` supports `name`, `workspace`, `emoji`, and `avatar`. If a model is supplied here, the page applies it in a second `agents.update` call.",
+        editAgent: "Edit Agent",
+        agentConfig: "Agent Config",
+        updateAgentDetail: "Update this agent through `agents.update`.",
+        agentConfigDetail: "Name, workspace, model, and avatar aligned with the gateway config.",
+        statusPolicy: "Status & Policy",
+        statusPolicyDetail: "Gateway-reported runtime status, defaults, and capability metadata.",
+        filesSnapshot: "Files Snapshot",
+        filesSnapshotDetail: "Browse and edit core workspace files without leaving the page.",
+        skillsSnapshot: "Skills Snapshot",
+        skillsSnapshotDetail: "Agent-scoped skill eligibility, install hints, and configuration readiness.",
+        coreFiles: "Core Files",
+        toolCatalog: "Tool Catalog",
+        toolCatalogDetail: "Runtime tool catalog grouped to match the official WebUI structure.",
+        agentSkills: "Agent Skills",
+        install: "Install",
+        enable: "Enable",
+        disable: "Disable",
+        saveKey: "Save Key",
+        saveEnvOverrides: "Save Env Overrides",
+        noCapabilities: "No capabilities metadata reported.",
+        noDescription: "No explicit description reported by the gateway for this agent. Use the config panel below to update its display name, workspace, model, and avatar.",
+      };
   const navigate = useNavigate();
   const isConnected = useConnectionStore((state) => state.state === "connected");
   const selectedAgentId = useChatStore((state) => state.selectedAgentId);
@@ -785,10 +919,10 @@ export function AgentsPage() {
     setAgentFormSeed(nextForm);
     setEditorMode("create");
     setPanel("overview");
-    setFeedback({
-      kind: "info",
-      message: "Create a new agent from the official workspace flow. Name and workspace are required.",
-    });
+      setFeedback({
+        kind: "info",
+        message: pageCopy.createAgentHint,
+      });
   };
 
   const openEdit = () => {
@@ -993,8 +1127,8 @@ export function AgentsPage() {
     return (
       <div className="workspace-empty-state agents-page agents-page--empty">
         <Bot size={40} className="text-text-tertiary" />
-        <h2 className="workspace-title">Agents</h2>
-        <p className="workspace-subtitle">Connect a gateway to inspect, create, edit, and manage agents.</p>
+        <h2 className="workspace-title">{pageCopy.title}</h2>
+        <p className="workspace-subtitle">{pageCopy.emptySubtitle}</p>
       </div>
     );
   }
@@ -1003,23 +1137,23 @@ export function AgentsPage() {
     <div className="workspace-page agents-page">
       <div className="workspace-toolbar agents-toolbar">
         <div>
-          <div className="agents-page__eyebrow">Control Surface</div>
-          <h2 className="workspace-title">Agents</h2>
+          <div className="agents-page__eyebrow">{pageCopy.eyebrow}</div>
+          <h2 className="workspace-title">{pageCopy.title}</h2>
           <p className="workspace-subtitle">
-            Official-style agent workspace with list management, config editing, files, tools, and skills panels.
+            {pageCopy.subtitle}
           </p>
         </div>
         <div className="workspace-toolbar__actions">
           <Button variant="secondary" onClick={refreshCurrentView} loading={agentsQuery.isFetching || configQuery.isFetching}>
             <RefreshCw size={14} />
-            Refresh
+            {pageCopy.refresh}
           </Button>
           <Button variant="secondary" onClick={openCreate}>
             <FolderPlus size={14} />
-            New Agent
+            {pageCopy.newAgent}
           </Button>
           <Button onClick={openInChat} disabled={!activeAgent || editorMode === "create"}>
-            Open Chat
+            {pageCopy.openChat}
             <ArrowRight size={14} />
           </Button>
         </div>
@@ -1037,7 +1171,7 @@ export function AgentsPage() {
 
       {configQuery.data?.valid === false && (
         <div className="workspace-alert workspace-alert--error">
-          Gateway config currently reports validation issues{configQuery.data.issues.length > 0 ? ` (${configQuery.data.issues.length})` : ""}. Agent edits may be partially constrained until the config is fixed.
+          {pageCopy.configIssues(configQuery.data.issues.length)}
         </div>
       )}
 
@@ -1045,12 +1179,12 @@ export function AgentsPage() {
         <Card className="agents-sidebar" padding={false}>
           <div className="agents-sidebar__header">
             <div>
-              <h3>Agents</h3>
-              <p>{agents.length} configured from `agents.list`.</p>
+              <h3>{pageCopy.title}</h3>
+              <p>{pageCopy.configuredFromList(agents.length)}</p>
             </div>
             <StatusBadge
               status={agentsQuery.error ? "error" : "connected"}
-              label={agentsQuery.error ? "Error" : `${visibleAgents.length} shown`}
+              label={agentsQuery.error ? "Error" : pageCopy.shownCount(visibleAgents.length)}
             />
           </div>
 
@@ -1060,29 +1194,29 @@ export function AgentsPage() {
               <input
                 value={listFilter}
                 onChange={(event) => setListFilter(event.target.value)}
-                placeholder="Filter by id, name, description"
+                placeholder={pageCopy.filterPlaceholder}
               />
             </label>
             <select
               className="agents-select"
               value={sortBy}
               onChange={(event) => setSortBy(event.target.value as AgentSort)}
-              aria-label="Sort agents"
+              aria-label={pageCopy.sortAgents}
             >
-              <option value="default">Default first</option>
-              <option value="name">Name</option>
-              <option value="id">ID</option>
-              <option value="status">Status</option>
+              <option value="default">{pageCopy.defaultFirst}</option>
+              <option value="name">{pageCopy.name}</option>
+              <option value="id">{pageCopy.id}</option>
+              <option value="status">{pageCopy.status}</option>
             </select>
           </div>
 
           {agentsQuery.error ? (
             <div className="workspace-alert workspace-alert--error agents-sidebar__state">{String(agentsQuery.error)}</div>
           ) : agentsQuery.isLoading ? (
-            <div className="workspace-inline-status agents-sidebar__state">Loading agents…</div>
+            <div className="workspace-inline-status agents-sidebar__state">{pageCopy.loadingAgents}</div>
           ) : visibleAgents.length === 0 ? (
             <div className="workspace-empty-inline agents-sidebar__state">
-              {listFilter.trim() ? "No agents matched the current filter." : "No agents were returned from `agents.list`."}
+              {listFilter.trim() ? pageCopy.noAgentsMatched : pageCopy.noAgentsReturned}
             </div>
           ) : (
             <div className="agents-list">
@@ -1091,7 +1225,7 @@ export function AgentsPage() {
                 const displayName = resolveAgentDisplayName(agent, selected ? activeIdentity : null);
                 const emoji = resolveAgentAvatar(agent, selected ? activeIdentity : null);
                 const resolvedConfig = resolveAgentConfig(configShape, agent.id);
-                const workspace = resolvedConfig.entry?.workspace || resolvedConfig.defaults?.workspace || "workspace pending";
+                const workspace = resolvedConfig.entry?.workspace || resolvedConfig.defaults?.workspace || pageCopy.workspacePending;
                 return (
                   <button
                     type="button"
@@ -1107,7 +1241,7 @@ export function AgentsPage() {
                     </div>
                     <div className="agents-list__status">
                       <StatusBadge status={agent.status} label={agent.status} />
-                      {agent.id === defaultId && <span className="detail-pill">default</span>}
+                      {agent.id === defaultId && <span className="detail-pill">{pageCopy.defaultTag}</span>}
                     </div>
                   </button>
                 );
@@ -1121,67 +1255,67 @@ export function AgentsPage() {
             <Card className="workspace-section agents-editor-card">
               <div className="workspace-section__header compact">
                 <div>
-                  <h4>Create Agent</h4>
-                  <p>Add a new entry through `agents.create`, then optionally apply model overrides.</p>
+                  <h4>{pageCopy.createAgent}</h4>
+                  <p>{pageCopy.createAgentDetail}</p>
                 </div>
                 <Sparkles size={16} className="text-text-tertiary" />
               </div>
 
               <div className="agents-form">
                 <label className="agents-field">
-                  <span>Name</span>
+                  <span>{pageCopy.name}</span>
                   <input
                     className="agents-input"
                     value={agentForm.name}
                     onChange={(event) => setAgentForm((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Research Assistant"
+                    placeholder={pageCopy.createNamePlaceholder}
                   />
                 </label>
                 <label className="agents-field">
-                  <span>Workspace</span>
+                  <span>{pageCopy.workspace}</span>
                   <input
                     className="agents-input mono"
                     value={agentForm.workspace}
                     onChange={(event) => setAgentForm((current) => ({ ...current, workspace: event.target.value }))}
-                    placeholder="~/openclaw/agents/research"
+                    placeholder={pageCopy.createWorkspacePlaceholder}
                   />
                 </label>
                 <label className="agents-field">
-                  <span>Model</span>
+                  <span>{pageCopy.model}</span>
                   <input
                     className="agents-input mono"
                     value={agentForm.model}
                     onChange={(event) => setAgentForm((current) => ({ ...current, model: event.target.value }))}
                     list="agents-model-list"
-                    placeholder="openai/gpt-5"
+                    placeholder={pageCopy.createModelPlaceholder}
                   />
                 </label>
                 <label className="agents-field">
-                  <span>Avatar</span>
+                  <span>{pageCopy.avatar}</span>
                   <input
                     className="agents-input"
                     value={agentForm.avatar}
                     onChange={(event) => setAgentForm((current) => ({ ...current, avatar: event.target.value }))}
-                    placeholder="🤖 or avatar label"
+                    placeholder={pageCopy.createAvatarPlaceholder}
                   />
                 </label>
                 <label className="agents-field">
-                  <span>Emoji</span>
+                  <span>{pageCopy.emoji}</span>
                   <input
                     className="agents-input"
                     value={agentForm.emoji}
                     onChange={(event) => setAgentForm((current) => ({ ...current, emoji: event.target.value }))}
-                    placeholder="🧠"
+                    placeholder={pageCopy.createEmojiPlaceholder}
                   />
                 </label>
                 <div className="agents-field agents-field--wide">
                   <div className="agents-form__hint">
-                    `agents.create` supports `name`, `workspace`, `emoji`, and `avatar`. If a model is supplied here, the page applies it in a second `agents.update` call.
+                    {pageCopy.createFormHint}
                   </div>
                 </div>
                 <div className="agents-form__actions agents-field agents-field--wide">
-                  <Button variant="ghost" onClick={cancelEditing}>Cancel</Button>
-                  <Button onClick={saveAgentForm} loading={savingAgent} disabled={!canSubmitAgentForm}>Create Agent</Button>
+                  <Button variant="ghost" onClick={cancelEditing}>{pageCopy.cancel}</Button>
+                  <Button onClick={saveAgentForm} loading={savingAgent} disabled={!canSubmitAgentForm}>{pageCopy.createAgentButton}</Button>
                 </div>
               </div>
             </Card>
@@ -1192,9 +1326,9 @@ export function AgentsPage() {
               <div className="workspace-empty-inline">
                 <div className="agents-empty-block">
                   <Bot size={24} />
-                  <strong>No agent selected</strong>
-                  <span>Create a new agent or choose one from the sidebar to inspect files, tools, and skills.</span>
-                  <Button size="sm" onClick={openCreate}>Create Agent</Button>
+                  <strong>{pageCopy.noAgentSelected}</strong>
+                  <span>{pageCopy.noAgentSelectedHint}</span>
+                  <Button size="sm" onClick={openCreate}>{pageCopy.createAgent}</Button>
                 </div>
               </div>
             </Card>
@@ -1210,8 +1344,7 @@ export function AgentsPage() {
                       {activeAgent.id === defaultId && <span className="detail-pill">default</span>}
                     </div>
                     <p>
-                      {activeAgent.description ||
-                        "No explicit description reported by the gateway for this agent. Use the config panel below to update its display name, workspace, model, and avatar."}
+                      {activeAgent.description || pageCopy.noDescription}
                     </p>
                     <div className="agents-hero__meta mono">{activeAgent.id}</div>
                     <div className="agents-hero__actions">
@@ -1255,7 +1388,7 @@ export function AgentsPage() {
                     </span>
                   ))
                 ) : (
-                  <span className="workspace-subcopy">No capabilities metadata reported.</span>
+                  <span className="workspace-subcopy">{pageCopy.noCapabilities}</span>
                 )}
                 {toolsQuery.data?.profiles.map((profile) => (
                   <span key={profile.id} className="detail-pill detail-pill--soft">
@@ -1265,14 +1398,20 @@ export function AgentsPage() {
               </div>
 
               <div className="agents-tabs" role="tablist" aria-label="Agent panels">
-                {PANELS.map((entry) => (
+                    {PANELS.map((entry) => (
                   <button
                     key={entry.id}
                     type="button"
                     className={`agents-tabs__tab ${panel === entry.id ? "active" : ""}`}
                     onClick={() => setPanel(entry.id)}
                   >
-                    {entry.label}
+                    {entry.id === "overview"
+                      ? pageCopy.overviewTab
+                      : entry.id === "files"
+                        ? pageCopy.filesTab
+                        : entry.id === "tools"
+                          ? pageCopy.toolsTab
+                          : pageCopy.skillsTab}
                   </button>
                 ))}
               </div>
@@ -1283,11 +1422,11 @@ export function AgentsPage() {
                     <Card className="workspace-section">
                       <div className="workspace-section__header compact">
                         <div>
-                          <h4>{editorMode === "edit" ? "Edit Agent" : "Agent Config"}</h4>
+                          <h4>{editorMode === "edit" ? pageCopy.editAgent : pageCopy.agentConfig}</h4>
                           <p>
                             {editorMode === "edit"
-                              ? "Update this agent through `agents.update`."
-                              : "Name, workspace, model, and avatar aligned with the gateway config."}
+                              ? pageCopy.updateAgentDetail
+                              : pageCopy.agentConfigDetail}
                           </p>
                         </div>
                         <Sparkles size={16} className="text-text-tertiary" />
@@ -1376,8 +1515,8 @@ export function AgentsPage() {
                     <Card className="workspace-section">
                       <div className="workspace-section__header compact">
                         <div>
-                          <h4>Status & Policy</h4>
-                          <p>Gateway-reported runtime status, defaults, and capability metadata.</p>
+                          <h4>{pageCopy.statusPolicy}</h4>
+                          <p>{pageCopy.statusPolicyDetail}</p>
                         </div>
                         <Wrench size={16} className="text-text-tertiary" />
                       </div>
@@ -1410,8 +1549,8 @@ export function AgentsPage() {
                     <Card className="workspace-section">
                       <div className="workspace-section__header compact">
                         <div>
-                          <h4>Files Snapshot</h4>
-                          <p>Browse and edit core workspace files without leaving the page.</p>
+                          <h4>{pageCopy.filesSnapshot}</h4>
+                          <p>{pageCopy.filesSnapshotDetail}</p>
                         </div>
                         <FileCode2 size={16} className="text-text-tertiary" />
                       </div>
@@ -1447,8 +1586,8 @@ export function AgentsPage() {
                     <Card className="workspace-section">
                       <div className="workspace-section__header compact">
                         <div>
-                          <h4>Skills Snapshot</h4>
-                          <p>Agent-scoped skill eligibility, install hints, and configuration readiness.</p>
+                          <h4>{pageCopy.skillsSnapshot}</h4>
+                          <p>{pageCopy.skillsSnapshotDetail}</p>
                         </div>
                         <KeyRound size={16} className="text-text-tertiary" />
                       </div>
@@ -1485,7 +1624,7 @@ export function AgentsPage() {
                 <Card className="workspace-section agents-panel" padding={false}>
                   <div className="agents-panel__header">
                     <div>
-                      <h3>Core Files</h3>
+                      <h3>{pageCopy.coreFiles}</h3>
                       <p>{filesListQuery.data?.workspace || "Load the workspace files for this agent."}</p>
                     </div>
                     <div className="workspace-toolbar__actions">
@@ -1599,8 +1738,8 @@ export function AgentsPage() {
                 <Card className="workspace-section agents-panel">
                   <div className="workspace-section__header">
                     <div>
-                      <h3>Tool Catalog</h3>
-                      <p>Runtime tool catalog grouped to match the official WebUI structure.</p>
+                      <h3>{pageCopy.toolCatalog}</h3>
+                      <p>{pageCopy.toolCatalogDetail}</p>
                     </div>
                     <div className="workspace-toolbar__actions">
                       <label className="agents-search">
@@ -1675,7 +1814,7 @@ export function AgentsPage() {
                 <Card className="workspace-section agents-panel">
                   <div className="workspace-section__header">
                     <div>
-                      <h3>Agent Skills</h3>
+                      <h3>{pageCopy.agentSkills}</h3>
                       <p>{skillsQuery.data?.workspaceDir || "Agent-scoped skill report from `skills.status`."}</p>
                     </div>
                     <div className="workspace-toolbar__actions">
@@ -1758,7 +1897,7 @@ export function AgentsPage() {
                                           loading={busySkill?.key === skill.skillKey && busySkill.action === "install"}
                                         >
                                           <PackagePlus size={14} />
-                                          Install
+                                          {pageCopy.install}
                                         </Button>
                                       )}
                                       <Button
@@ -1768,7 +1907,7 @@ export function AgentsPage() {
                                         loading={busySkill?.key === skill.skillKey && busySkill.action === "toggle"}
                                         disabled={skill.always}
                                       >
-                                        {toggledOff ? "Enable" : "Disable"}
+                                        {toggledOff ? pageCopy.enable : pageCopy.disable}
                                       </Button>
                                     </div>
                                   </div>
@@ -1817,7 +1956,7 @@ export function AgentsPage() {
                                             onClick={() => saveSkillApiKey(skill, apiKeyValue)}
                                             loading={busySkill?.key === skill.skillKey && busySkill.action === "apiKey"}
                                           >
-                                            Save Key
+                                            {pageCopy.saveKey}
                                           </Button>
                                         </div>
                                       )}
@@ -1852,7 +1991,7 @@ export function AgentsPage() {
                                               onClick={() => saveSkillEnv(skill, envValue)}
                                               loading={busySkill?.key === skill.skillKey && busySkill.action === "env"}
                                             >
-                                              Save Env Overrides
+                                              {pageCopy.saveEnvOverrides}
                                             </Button>
                                           </div>
                                         </>

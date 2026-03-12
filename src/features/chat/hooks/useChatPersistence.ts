@@ -62,6 +62,13 @@ export function useChatPersistence() {
         if (!mounted || !persisted) return;
 
         useChatStore.setState((state) => {
+          if (
+            state.selectedAgentId === persisted.selectedAgentId &&
+            state.selectedSessionId === (persisted.selectedSessionId ?? state.selectedSessionId) &&
+            state.selectedModelId === persisted.selectedModelId
+          ) {
+            return state;
+          }
           return {
             ...state,
             selectedAgentId: persisted.selectedAgentId,

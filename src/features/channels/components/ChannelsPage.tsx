@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  CheckCircle2,
   Link2,
   LoaderCircle,
   LogOut,
@@ -10,12 +9,11 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
-  ShieldCheck,
   TestTube2,
-  ToggleLeft,
 } from "lucide-react";
 import { Button, Card, StatusBadge } from "@/components/ui";
 import { useConnectionStore } from "@/features/connection/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import { formatRelativeTime, truncate } from "@/lib/utils";
 import { ChannelConfigForm } from "./ChannelConfigForm";
@@ -27,6 +25,8 @@ import {
   buildStatusItems,
   cloneJsonRecord,
   createNostrProfileFormState,
+  deriveConnectedStatus,
+  deriveRunningStatus,
   formatBoolean,
   formatChannelSummary,
   formatTimestamp,
@@ -34,7 +34,6 @@ import {
   normalizeConfigSchemaResponse,
   normalizeConfigSnapshot,
   parseNostrFieldErrors,
-  readBoolean,
   readString,
   renderAccountFlags,
   resolveChannelConfigValue,
@@ -64,6 +63,241 @@ const CHANNELS_QUERY_KEY = ["channels-status"] as const;
 const CONFIG_QUERY_KEY = ["gateway-config", "channels"] as const;
 const SCHEMA_QUERY_KEY = ["gateway-config-schema", "channels"] as const;
 
+type ChannelsCopy = {
+  title: string;
+  subtitle: string;
+  emptySubtitle: string;
+  eyebrow: string;
+  deepProbeOn: string;
+  fastStatus: string;
+  reloadConfig: string;
+  activeCount: (active: number, total: number) => string;
+  accountsCount: (total: number) => string;
+  deepProbe: string;
+  fastMode: string;
+  loading: string;
+  empty: string;
+  accountCount: (count: number) => string;
+  defaultAccount: (accountId: string) => string;
+  active: string;
+  idle: string;
+  linked: string;
+  notLinked: string;
+  whatsappQrAlt: string;
+  editProfile: string;
+  disable: string;
+  enable: string;
+  showQr: string;
+  relink: string;
+  wait: string;
+  logout: string;
+  probe: string;
+  configuration: string;
+  gatewayConfig: string;
+  invalid: string;
+  ready: string;
+  channelHealth: string;
+  channelHealthDetail: string;
+  deepProbeLabel: string;
+  fastModeLabel: string;
+  updated: (relative: string) => string;
+  waitingForData: string;
+  configured: string;
+  running: string;
+  connected: string;
+  lastInbound: string;
+  lastProbe: string;
+  publicKey: string;
+  flags: string;
+  profile: string;
+  name: string;
+  display: string;
+  website: string;
+  noProfilePublished: string;
+  accountFallback: (index: number) => string;
+  refresh: string;
+  yes: string;
+  no: string;
+  notAvailable: string;
+  error: string;
+  disconnected: string;
+  unavailable: string;
+  activeState: string;
+  rawJsonApplied: string;
+  configMustBeObject: string;
+  configHashMissing: string;
+  configSaved: (channelId: string) => string;
+  channelEnabled: (label: string) => string;
+  channelDisabled: (label: string) => string;
+  configReloaded: (channelId: string) => string;
+  loggedOut: string;
+  profilePublishFailed: string;
+  profilePublished: string;
+  profileUpdateFailed: (status: number) => string;
+  profileUpdateFailedWithError: (error: string) => string;
+  profileImportFailed: (status: number) => string;
+  profileImportFailedWithError: (error: string) => string;
+  profileImported: string;
+  profileImportedSaved: string;
+};
+
+const CHANNELS_COPY = {
+  en: {
+    title: "Channels",
+    subtitle: "Official-style channel workspace with per-channel status, account detail, structured config, enable toggles, probe actions, and WhatsApp / Nostr flows.",
+    emptySubtitle: "Connect a gateway to inspect channel health, login state, and channel config panels.",
+    eyebrow: "Control Surface",
+    deepProbeOn: "Deep Probe On",
+    fastStatus: "Fast Status",
+    reloadConfig: "Reload Config",
+    activeCount: (active: number, total: number) => `${active}/${total} active`,
+    accountsCount: (total: number) => `${total} accounts`,
+    deepProbe: "deep probe",
+    fastMode: "fast status",
+    loading: "Loading channels…",
+    empty: "No channels reported by the gateway yet.",
+    accountCount: (count: number) => `${count} account${count === 1 ? "" : "s"}`,
+    defaultAccount: (accountId: string) => `default ${accountId}`,
+    active: "active",
+    idle: "idle",
+    linked: "Linked",
+    notLinked: "Not linked",
+    whatsappQrAlt: "WhatsApp QR code",
+    editProfile: "Edit Profile",
+    disable: "Disable",
+    enable: "Enable",
+    showQr: "Show QR",
+    relink: "Relink",
+    wait: "Wait",
+    logout: "Logout",
+    probe: "Probe",
+    configuration: "Configuration",
+    gatewayConfig: "Gateway config",
+    invalid: "Invalid",
+    ready: "Ready",
+    channelHealth: "Channel Health",
+    channelHealthDetail: "Raw `channels.status` snapshot from the gateway for parity checks and diagnostics.",
+    deepProbeLabel: "Deep probe",
+    fastModeLabel: "Fast mode",
+    updated: (relative: string) => `Updated ${relative}`,
+    waitingForData: "Waiting for data",
+    configured: "Configured",
+    running: "Running",
+    connected: "Connected",
+    lastInbound: "Last inbound",
+    lastProbe: "Last probe",
+    publicKey: "Public Key",
+    flags: "Flags",
+    profile: "Profile",
+    name: "Name",
+    display: "Display",
+    website: "Website",
+    noProfilePublished: "No profile published.",
+    accountFallback: (index: number) => `Account ${index + 1}`,
+    refresh: "Refresh",
+    yes: "Yes",
+    no: "No",
+    notAvailable: "n/a",
+    error: "Error",
+    disconnected: "Disconnected",
+    unavailable: "Unavailable",
+    activeState: "Active",
+    rawJsonApplied: "Raw JSON applied to the local draft.",
+    configMustBeObject: "Channel config must be a JSON object.",
+    configHashMissing: "Config hash missing. Reload config and retry.",
+    configSaved: (channelId: string) => `${channelId} config saved.`,
+    channelEnabled: (label: string) => `${label} enabled.`,
+    channelDisabled: (label: string) => `${label} disabled.`,
+    configReloaded: (channelId: string) => `${channelId} config reloaded.`,
+    loggedOut: "Logged out from WhatsApp.",
+    profilePublishFailed: "Profile publish failed on all relays.",
+    profilePublished: "Profile published to relays.",
+    profileUpdateFailed: (status: number) => `Profile update failed (${status})`,
+    profileUpdateFailedWithError: (error: string) => `Profile update failed: ${error}`,
+    profileImportFailed: (status: number) => `Profile import failed (${status})`,
+    profileImportFailedWithError: (error: string) => `Profile import failed: ${error}`,
+    profileImported: "Profile imported. Review and publish.",
+    profileImportedSaved: "Profile imported from relays. Review and publish.",
+  },
+  zh: {
+    title: "渠道",
+    subtitle: "官方风格的渠道工作区，包含每个渠道的状态、账号详情、结构化配置、启停开关、探测动作以及 WhatsApp / Nostr 流程。",
+    emptySubtitle: "先连接网关，再查看渠道健康状态、登录状态和渠道配置面板。",
+    eyebrow: "控制台",
+    deepProbeOn: "深度探测",
+    fastStatus: "快速状态",
+    reloadConfig: "重载配置",
+    activeCount: (active: number, total: number) => `${active}/${total} 已启用`,
+    accountsCount: (total: number) => `${total} 个账号`,
+    deepProbe: "深度探测",
+    fastMode: "快速状态",
+    loading: "正在加载渠道…",
+    empty: "网关暂时还没有上报任何渠道。",
+    accountCount: (count: number) => `${count} 个账号`,
+    defaultAccount: (accountId: string) => `默认 ${accountId}`,
+    active: "活跃",
+    idle: "空闲",
+    linked: "已绑定",
+    notLinked: "未绑定",
+    whatsappQrAlt: "WhatsApp 二维码",
+    editProfile: "编辑资料",
+    disable: "停用",
+    enable: "启用",
+    showQr: "显示二维码",
+    relink: "重新绑定",
+    wait: "等待",
+    logout: "退出登录",
+    probe: "探测",
+    configuration: "配置",
+    gatewayConfig: "网关配置",
+    invalid: "无效",
+    ready: "就绪",
+    channelHealth: "渠道健康状态",
+    channelHealthDetail: "来自网关的原始 `channels.status` 快照，用于对齐和诊断。",
+    deepProbeLabel: "深度探测",
+    fastModeLabel: "快速模式",
+    updated: (relative: string) => `更新于${relative}`,
+    waitingForData: "等待数据",
+    configured: "已配置",
+    running: "运行中",
+    connected: "已连接",
+    lastInbound: "最近入站",
+    lastProbe: "最近探测",
+    publicKey: "公钥",
+    flags: "标记",
+    profile: "资料",
+    name: "名称",
+    display: "显示名",
+    website: "网站",
+    noProfilePublished: "还没有发布资料。",
+    accountFallback: (index: number) => `账号 ${index + 1}`,
+    refresh: "刷新",
+    yes: "是",
+    no: "否",
+    notAvailable: "无",
+    error: "错误",
+    disconnected: "未连接",
+    unavailable: "不可用",
+    activeState: "活跃",
+    rawJsonApplied: "原始 JSON 已应用到本地草稿。",
+    configMustBeObject: "渠道配置必须是一个 JSON 对象。",
+    configHashMissing: "缺少配置哈希，请重新加载配置后再试。",
+    configSaved: (channelId: string) => `已保存 ${channelId} 配置。`,
+    channelEnabled: (label: string) => `${label} 已启用。`,
+    channelDisabled: (label: string) => `${label} 已停用。`,
+    configReloaded: (channelId: string) => `已重新加载 ${channelId} 配置。`,
+    loggedOut: "已退出 WhatsApp 登录。",
+    profilePublishFailed: "所有中继上的资料发布都失败了。",
+    profilePublished: "资料已发布到中继。",
+    profileUpdateFailed: (status: number) => `资料更新失败（${status}）`,
+    profileUpdateFailedWithError: (error: string) => `资料更新失败：${error}`,
+    profileImportFailed: (status: number) => `资料导入失败（${status}）`,
+    profileImportFailedWithError: (error: string) => `资料导入失败：${error}`,
+    profileImported: "资料已导入，请检查后发布。",
+    profileImportedSaved: "已从中继导入资料，请检查后发布。",
+  },
+} as const satisfies Record<"en" | "zh", ChannelsCopy>;
+
 function renderStatusList(items: Array<{ label: string; value: string }>) {
   if (items.length === 0) {
     return null;
@@ -80,13 +314,64 @@ function renderStatusList(items: Array<{ label: string; value: string }>) {
   );
 }
 
-function channelMonogram(label: string) {
-  return label
-    .split(/\s+/u)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
+function localizeChannelStatus(label: string, copy: ChannelsCopy) {
+  switch (label) {
+    case "Connected":
+      return copy.connected;
+    case "Running":
+      return copy.running;
+    case "Linked":
+      return copy.linked;
+    case "Configured":
+      return copy.configured;
+    case "Disconnected":
+      return copy.disconnected;
+    case "Unavailable":
+      return copy.unavailable;
+    case "Error":
+      return copy.error;
+    case "Idle":
+      return copy.idle;
+    default:
+      return label;
+  }
+}
+
+function localizeStatusValue(value: string, copy: ChannelsCopy) {
+  switch (value) {
+    case "Yes":
+      return copy.yes;
+    case "No":
+      return copy.no;
+    case "n/a":
+      return copy.notAvailable;
+    case "Active":
+      return copy.activeState;
+    default:
+      return value;
+  }
+}
+
+function accountBadgeState(
+  account: ChannelAccountSnapshot,
+  copy: ChannelsCopy,
+): { status: "connected" | "running" | "idle" | "error"; label: string } {
+  const connectedStatus = deriveConnectedStatus(account);
+  const runningStatus = deriveRunningStatus(account);
+
+  if (connectedStatus === "Yes") {
+    return { status: "connected", label: copy.connected };
+  }
+  if (connectedStatus === "Active" || runningStatus === "Active") {
+    return { status: "running", label: copy.activeState };
+  }
+  if (runningStatus === "Yes") {
+    return { status: "running", label: copy.running };
+  }
+  if (account.lastError) {
+    return { status: "error", label: copy.error };
+  }
+  return { status: "idle", label: copy.idle };
 }
 
 function renderProbeCallout(status: JsonRecord | undefined) {
@@ -97,7 +382,11 @@ function renderProbeCallout(status: JsonRecord | undefined) {
   return <div className="workspace-alert channels-page__alert">{message}</div>;
 }
 
-function renderAccountCards(accounts: ChannelAccountSnapshot[], channelId: string) {
+function renderAccountCards(
+  accounts: ChannelAccountSnapshot[],
+  channelId: string,
+  copy: ChannelsCopy,
+) {
   if (accounts.length === 0) {
     return null;
   }
@@ -114,26 +403,27 @@ function renderAccountCards(accounts: ChannelAccountSnapshot[], channelId: strin
                 const username = readString(bot, "username");
                 return username
                   ? `@${username}`
-                  : account.name ?? account.accountId ?? `Account ${index + 1}`;
+                  : account.name ?? account.accountId ?? copy.accountFallback(index);
               })()
             : channelId === "nostr"
               ? readString(profileRecord, "displayName") ??
                 readString(profileRecord, "name") ??
                 account.name ??
                 account.accountId ??
-                `Account ${index + 1}`
-              : account.name ?? account.accountId ?? `Account ${index + 1}`;
+                copy.accountFallback(index)
+              : account.name ?? account.accountId ?? copy.accountFallback(index);
 
         const details = buildStatusItems([
-          ["Configured", formatBoolean(account.configured)],
-          ["Running", formatBoolean(account.running)],
-          ["Connected", formatBoolean(account.connected)],
-          ["Last inbound", formatTimestamp(account.lastInboundAt)],
-          ["Last probe", formatTimestamp(account.lastProbeAt)],
+          [copy.running, deriveRunningStatus(account)],
+          [copy.configured, formatBoolean(account.configured)],
+          [copy.connected, deriveConnectedStatus(account)],
+          [copy.lastInbound, formatTimestamp(account.lastInboundAt)],
+          [copy.lastProbe, formatTimestamp(account.lastProbeAt)],
           channelId === "nostr"
-            ? ["Public Key", truncateMiddle(account.publicKey)]
-            : ["Flags", renderAccountFlags(account)],
+            ? [copy.publicKey, truncateMiddle(account.publicKey)]
+            : [copy.flags, renderAccountFlags(account)],
         ]);
+        const badge = accountBadgeState(account, copy);
 
         return (
           <div key={`${channelId}-${account.accountId}-${index}`} className="channels-account-card">
@@ -143,19 +433,16 @@ function renderAccountCards(accounts: ChannelAccountSnapshot[], channelId: strin
                 <div className="channels-account-card__id mono">{account.accountId}</div>
               </div>
               <StatusBadge
-                status={account.connected ? "connected" : account.running ? "running" : account.lastError ? "error" : "idle"}
-                label={
-                  account.connected
-                    ? "Connected"
-                    : account.running
-                      ? "Running"
-                      : account.lastError
-                        ? "Error"
-                        : "Idle"
-                }
+                status={badge.status}
+                label={badge.label}
               />
             </div>
-            {renderStatusList(details)}
+            {renderStatusList(
+              details.map((detail) => ({
+                ...detail,
+                value: localizeStatusValue(detail.value, copy),
+              })),
+            )}
             {account.lastError && (
               <div className="channels-account-card__error">{account.lastError}</div>
             )}
@@ -166,32 +453,45 @@ function renderAccountCards(accounts: ChannelAccountSnapshot[], channelId: strin
   );
 }
 
-function renderChannelSummary(channel: ChannelDefinition) {
-  if (["telegram", "nostr"].includes(channel.id) && channel.accounts.length > 1) {
-    return renderAccountCards(channel.accounts, channel.id);
+function renderChannelSummary(channel: ChannelDefinition, copy: ChannelsCopy) {
+  if (channel.id === "telegram" && channel.accounts.length > 1) {
+    return renderAccountCards(channel.accounts, channel.id, copy);
+  }
+
+  if (
+    !["whatsapp", "telegram", "nostr"].includes(channel.id) &&
+    channel.accounts.length > 0
+  ) {
+    return renderAccountCards(channel.accounts, channel.id, copy);
   }
 
   const summaryItems = formatChannelSummary(channel);
   const profile = resolvePrimaryNostrProfile(channel);
 
+  const localizedSummaryItems = summaryItems.map((item) => ({
+    ...item,
+    label: localizeChannelStatus(item.label, copy),
+    value: localizeStatusValue(item.value, copy),
+  }));
+
   if (channel.id !== "nostr") {
-    return renderStatusList(summaryItems);
+    return renderStatusList(localizedSummaryItems);
   }
 
   return (
     <>
-      {renderStatusList(summaryItems)}
+      {renderStatusList(localizedSummaryItems)}
       {profile && (
         <div className="channels-profile-card">
-          <div className="channels-profile-card__title">Profile</div>
+          <div className="channels-profile-card__title">{copy.profile}</div>
           {renderStatusList(
             buildStatusItems([
-              ["Name", profile.name],
-              ["Display", profile.displayName],
+              [copy.name, profile.name],
+              [copy.display, profile.displayName],
               ["NIP-05", profile.nip05],
-              ["Website", profile.website],
+              [copy.website, profile.website],
             ]),
-          ) ?? <div className="workspace-subcopy">No profile published.</div>}
+          ) ?? <div className="workspace-subcopy">{copy.noProfilePublished}</div>}
           {profile.about && (
             <p className="channels-profile-card__about">{truncate(profile.about, 220)}</p>
           )}
@@ -236,6 +536,9 @@ export function ChannelsPage() {
     [activeConfigId, configs],
   );
   const isConnected = connectionState === "connected";
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const copy = isChinese ? CHANNELS_COPY.zh : CHANNELS_COPY.en;
 
   const [probe, setProbe] = useState(true);
   const [whatsAppBusy, setWhatsAppBusy] = useState(false);
@@ -336,12 +639,12 @@ export function ChannelsPage() {
       const parsed = rawValue.trim() ? JSON.parse(rawValue) : {};
       const record = asRecord(parsed);
       if (!record) {
-        throw new Error("Channel config must be a JSON object.");
+        throw new Error(copy.configMustBeObject);
       }
       updateChannelDraft(channelId, record);
       setChannelFeedback((current) => ({
         ...current,
-        [channelId]: { kind: "success", message: "Raw JSON applied to the local draft." },
+        [channelId]: { kind: "success", message: copy.rawJsonApplied },
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -367,7 +670,7 @@ export function ChannelsPage() {
         ...current,
         [channelId]: {
           kind: "error",
-          message: "Config hash missing. Reload config and retry.",
+          message: copy.configHashMissing,
         },
       }));
       return;
@@ -386,7 +689,7 @@ export function ChannelsPage() {
         ...current,
         [channelId]: {
           kind: "success",
-          message: successMessage ?? `${channelId} config saved.`,
+          message: successMessage ?? copy.configSaved(channelId),
         },
       }));
       await Promise.all([configQuery.refetch(), channelsQuery.refetch()]);
@@ -403,18 +706,6 @@ export function ChannelsPage() {
     }
   }
 
-  async function toggleChannelEnabled(channel: ChannelDefinition) {
-    const currentValue = cloneJsonRecord(channelDrafts[channel.id] ?? {});
-    const nextEnabled = !(readBoolean(currentValue, "enabled") ?? channel.enabled);
-    currentValue.enabled = nextEnabled;
-    updateChannelDraft(channel.id, currentValue);
-    await persistChannelConfig(
-      channel.id,
-      currentValue,
-      `${channel.label} ${nextEnabled ? "enabled" : "disabled"}.`,
-    );
-  }
-
   async function reloadChannelConfig(channelId: string) {
     setChannelBusyId(channelId);
     setGlobalFeedback(null);
@@ -424,7 +715,7 @@ export function ChannelsPage() {
       updateChannelDraft(channelId, nextValue);
       setChannelFeedback((current) => ({
         ...current,
-        [channelId]: { kind: "info", message: `${channelId} config reloaded.` },
+        [channelId]: { kind: "info", message: copy.configReloaded(channelId) },
       }));
     } catch (error) {
       setChannelFeedback((current) => ({
@@ -488,7 +779,7 @@ export function ChannelsPage() {
     setGlobalFeedback(null);
     try {
       await gateway.request("channels.logout", { channel: "whatsapp" });
-      setWhatsAppMessage("Logged out from WhatsApp.");
+      setWhatsAppMessage(copy.loggedOut);
       setWhatsAppQrDataUrl(null);
       setWhatsAppLinked(false);
       await channelsQuery.refetch();
@@ -566,7 +857,7 @@ export function ChannelsPage() {
             ? {
                 ...current,
                 saving: false,
-                error: payload?.error ?? `Profile update failed (${response.status})`,
+                error: payload?.error ?? copy.profileUpdateFailed(response.status),
                 success: null,
                 fieldErrors: parseNostrFieldErrors(payload?.details),
               }
@@ -581,7 +872,7 @@ export function ChannelsPage() {
             ? {
                 ...current,
                 saving: false,
-                error: "Profile publish failed on all relays.",
+                error: copy.profilePublishFailed,
                 success: null,
               }
             : current,
@@ -595,7 +886,7 @@ export function ChannelsPage() {
               ...current,
               saving: false,
               error: null,
-              success: "Profile published to relays.",
+              success: copy.profilePublished,
               original: { ...current.values },
               fieldErrors: {},
             }
@@ -608,7 +899,7 @@ export function ChannelsPage() {
           ? {
               ...current,
               saving: false,
-              error: `Profile update failed: ${String(error)}`,
+              error: copy.profileUpdateFailedWithError(String(error)),
               success: null,
             }
           : current,
@@ -660,7 +951,7 @@ export function ChannelsPage() {
             ? {
                 ...current,
                 importing: false,
-                error: payload?.error ?? `Profile import failed (${response.status})`,
+                error: payload?.error ?? copy.profileImportFailed(response.status),
                 success: null,
               }
             : current,
@@ -681,9 +972,7 @@ export function ChannelsPage() {
             nextValues.banner || nextValues.website || nextValues.nip05 || nextValues.lud16,
           ),
           error: null,
-          success: payload.saved
-            ? "Profile imported from relays. Review and publish."
-            : "Profile imported. Review and publish.",
+          success: payload.saved ? copy.profileImportedSaved : copy.profileImported,
         };
       });
 
@@ -696,7 +985,7 @@ export function ChannelsPage() {
           ? {
               ...current,
               importing: false,
-              error: `Profile import failed: ${String(error)}`,
+              error: copy.profileImportFailedWithError(String(error)),
               success: null,
             }
           : current,
@@ -708,33 +997,26 @@ export function ChannelsPage() {
     return (
       <div className="workspace-empty-state channels-page channels-page--empty">
         <Radio size={40} className="text-text-tertiary" />
-        <h2 className="workspace-title">Channels</h2>
+        <h2 className="workspace-title">{copy.title}</h2>
         <p className="workspace-subtitle">
-          Connect a gateway to inspect channel health, login state, and channel config panels.
+          {copy.emptySubtitle}
         </p>
       </div>
     );
   }
 
-  const activeCount = channels.filter((channel) => channel.enabled).length;
-  const totalAccounts = channels.reduce(
-    (count, channel) => count + channel.accounts.length,
-    0,
-  );
-
   return (
     <div className="workspace-page channels-page">
       <div className="workspace-toolbar channels-toolbar">
         <div>
-          <div className="channels-page__eyebrow">Control Surface</div>
-          <h2 className="workspace-title">Channels</h2>
+          <h2 className="workspace-title">{copy.title}</h2>
           <p className="workspace-subtitle">
-            Official-style channel workspace with per-channel status, account detail, structured config, enable toggles, probe actions, and WhatsApp / Nostr flows.
+            {copy.subtitle}
           </p>
         </div>
         <div className="workspace-toolbar__actions">
           <Button variant="ghost" onClick={() => requestRefresh(!probe)}>
-            {probe ? "Deep Probe On" : "Fast Status"}
+            {probe ? copy.deepProbeOn : copy.fastStatus}
           </Button>
           <Button
             variant="secondary"
@@ -742,7 +1024,7 @@ export function ChannelsPage() {
             loading={channelsQuery.isFetching}
           >
             <RefreshCw size={14} />
-            Refresh
+            {copy.refresh}
           </Button>
           <Button
             variant="secondary"
@@ -753,28 +1035,9 @@ export function ChannelsPage() {
             loading={configQuery.isFetching || schemaQuery.isFetching}
           >
             <RotateCcw size={14} />
-            Reload Config
+            {copy.reloadConfig}
           </Button>
         </div>
-      </div>
-
-      <div className="channels-overview-pills">
-        <span>
-          <ShieldCheck size={14} />
-          {activeCount}/{channels.length || 0} active
-        </span>
-        <span>
-          <Link2 size={14} />
-          {totalAccounts} accounts
-        </span>
-        <span>
-          <TestTube2 size={14} />
-          {probe ? "deep probe" : "fast status"}
-        </span>
-        <span>
-          <CheckCircle2 size={14} />
-          {channelsQuery.data ? `updated ${formatRelativeTime(channelsQuery.data.ts)}` : "waiting for data"}
-        </span>
       </div>
 
       {channelsQuery.error && (
@@ -798,10 +1061,10 @@ export function ChannelsPage() {
 
       {channelsQuery.isLoading ? (
         <div className="workspace-inline-status">
-          <LoaderCircle size={16} className="spin" /> Loading channels…
+          <LoaderCircle size={16} className="spin" /> {copy.loading}
         </div>
       ) : channels.length === 0 ? (
-        <div className="workspace-empty-inline">No channels reported by the gateway yet.</div>
+        <div className="workspace-empty-inline">{copy.empty}</div>
       ) : (
         <div className="channels-grid">
           {channels.map((channel) => {
@@ -827,28 +1090,23 @@ export function ChannelsPage() {
               >
                 <div className="channels-card__header">
                   <div className="channels-card__title-wrap">
-                    <div className="channels-card__sigil" aria-hidden="true">
-                      {channelMonogram(channel.label)}
-                    </div>
                     <div>
-                      <div className="channels-card__eyebrow">{channel.id}</div>
                       <h3>{channel.label}</h3>
                       <p>{channel.detail}</p>
                     </div>
                   </div>
                   <StatusBadge
                     status={statusTone(status)}
-                    label={statusLabel(status)}
+                    label={localizeChannelStatus(statusLabel(status), copy)}
                   />
                 </div>
 
                 <div className="channels-card__meta">
-                  <span>{accountCount} account{accountCount === 1 ? "" : "s"}</span>
-                  {channel.defaultAccountId && <span>default {channel.defaultAccountId}</span>}
-                  <span>{channel.enabled ? "active" : "idle"}</span>
+                  {accountCount > 1 && <span>{copy.accountCount(accountCount)}</span>}
+                  {channel.defaultAccountId && <span>{copy.defaultAccount(channel.defaultAccountId)}</span>}
                 </div>
 
-                {renderChannelSummary(channel)}
+                {renderChannelSummary(channel, copy)}
                 {lastError && (
                   <div className="workspace-alert workspace-alert--error channels-page__alert">
                     {lastError}
@@ -876,13 +1134,13 @@ export function ChannelsPage() {
                       <div className="channels-whatsapp-state">
                         <StatusBadge
                           status={whatsAppLinked ? "connected" : "idle"}
-                          label={whatsAppLinked ? "Linked" : "Not linked"}
+                          label={whatsAppLinked ? copy.linked : copy.notLinked}
                         />
                       </div>
                     )}
                     {whatsAppQrDataUrl && (
                       <div className="channels-qr-wrap">
-                        <img src={whatsAppQrDataUrl} alt="WhatsApp QR code" />
+                        <img src={whatsAppQrDataUrl} alt={copy.whatsappQrAlt} />
                       </div>
                     )}
                   </>
@@ -914,80 +1172,68 @@ export function ChannelsPage() {
                       variant="secondary"
                       onClick={() => handleNostrProfileEdit(channel)}
                     >
-                      Edit Profile
+                      {copy.editProfile}
                     </Button>
                   </div>
                 ) : null}
 
-                <div className="channels-actions">
-                  <Button
-                    size="sm"
-                    variant={channel.enabled ? "ghost" : "secondary"}
-                    onClick={() => void toggleChannelEnabled(channel)}
-                    loading={isBusy}
-                  >
-                    <ToggleLeft size={14} />
-                    {channel.enabled ? "Disable" : "Enable"}
-                  </Button>
-                  {channel.id === "whatsapp" ? (
-                    <>
-                      <Button size="sm" onClick={() => void startWhatsAppLogin(false)} loading={whatsAppBusy}>
+                {channel.id === "whatsapp" && (
+                  <div className="channels-actions">
+                    <Button size="sm" onClick={() => void startWhatsAppLogin(false)} loading={whatsAppBusy}>
                         <Play size={14} />
-                        Show QR
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void startWhatsAppLogin(true)}
-                        loading={whatsAppBusy}
-                      >
-                        <RefreshCw size={14} />
-                        Relink
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => void waitWhatsAppLogin()}
-                        loading={whatsAppBusy}
-                      >
-                        <Link2 size={14} />
-                        Wait
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => void logoutWhatsApp()}
-                        loading={whatsAppBusy}
-                      >
-                        <LogOut size={14} />
-                        Logout
-                      </Button>
-                    </>
-                  ) : (
+                        {copy.showQr}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void startWhatsAppLogin(true)}
+                      loading={whatsAppBusy}
+                    >
+                      <RefreshCw size={14} />
+                      {copy.relink}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void waitWhatsAppLogin()}
+                      loading={whatsAppBusy}
+                    >
+                      <Link2 size={14} />
+                      {copy.wait}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => void logoutWhatsApp()}
+                      loading={whatsAppBusy}
+                    >
+                      <LogOut size={14} />
+                      {copy.logout}
+                    </Button>
                     <Button
                       size="sm"
                       variant="secondary"
                       onClick={() => requestRefresh(true)}
                       loading={channelsQuery.isFetching && probe}
                     >
-                      <TestTube2 size={14} />
-                      Probe
+                      <RefreshCw size={14} />
+                      {copy.refresh}
                     </Button>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 <div className="channels-config">
                   <div className="channels-config__header">
                     <div>
-                      <h4>Configuration</h4>
+                      <h4>{copy.configuration}</h4>
                       <p>
-                        {configQuery.data?.path ?? "Gateway config"} · channels.{channel.id}
+                        {configQuery.data?.path ?? copy.gatewayConfig} · channels.{channel.id}
                       </p>
                     </div>
                     <div className="channels-config__status">
                       <StatusBadge
                         status={configQuery.data?.valid === false ? "error" : "connected"}
-                        label={configQuery.data?.valid === false ? "Invalid" : "Ready"}
+                        label={configQuery.data?.valid === false ? copy.invalid : copy.ready}
                       />
                     </div>
                   </div>
@@ -1018,7 +1264,7 @@ export function ChannelsPage() {
                       disabled={!isDirty}
                     >
                       <Save size={14} />
-                      Save
+                      {isChinese ? "保存" : "Save"}
                     </Button>
                     <Button
                       size="sm"
@@ -1027,10 +1273,24 @@ export function ChannelsPage() {
                       loading={isBusy}
                     >
                       <RotateCcw size={14} />
-                      Reload
+                      {isChinese ? "重新加载" : "Reload"}
                     </Button>
                   </div>
                 </div>
+
+                {channel.id === "telegram" && (
+                  <div className="channels-actions channels-actions--after-config">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => requestRefresh(true)}
+                      loading={channelsQuery.isFetching && probe}
+                    >
+                      <TestTube2 size={14} />
+                      {copy.probe}
+                    </Button>
+                  </div>
+                )}
               </Card>
             );
           })}
@@ -1040,18 +1300,18 @@ export function ChannelsPage() {
       <Card className="workspace-section channels-snapshot">
         <div className="workspace-section__header">
           <div>
-            <h3>Channel Health</h3>
-            <p>Raw `channels.status` snapshot from the gateway for parity checks and diagnostics.</p>
+            <h3>{copy.channelHealth}</h3>
+            <p>{copy.channelHealthDetail}</p>
           </div>
           <div className="channels-snapshot__meta">
             <StatusBadge
               status={probe ? "connected" : "idle"}
-              label={probe ? "Deep probe" : "Fast mode"}
+              label={probe ? copy.deepProbeLabel : copy.fastModeLabel}
             />
             <span className="workspace-meta">
               {channelsQuery.data
-                ? `Updated ${formatRelativeTime(channelsQuery.data.ts)}`
-                : "Waiting for data"}
+                ? copy.updated(formatRelativeTime(channelsQuery.data.ts))
+                : copy.waitingForData}
             </span>
           </div>
         </div>
@@ -1061,7 +1321,7 @@ export function ChannelsPage() {
         </pre>
 
         {configQuery.data?.issues && configQuery.data.issues.length > 0 && (
-          <div className="channels-issues">
+          <div className="channels-issues channels-issues--muted">
             {configQuery.data.issues.map((issue, index) => (
               <div key={`${issue.path}-${index}`} className="channels-issues__row">
                 <strong>{issue.path}</strong>

@@ -1,5 +1,6 @@
 import { Upload } from "lucide-react";
 import { Button } from "@/components/ui";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import type { NostrProfile, NostrProfileFormState } from "./channel-types";
 
 type NostrProfileEditorProps = {
@@ -58,17 +59,68 @@ function Field(props: {
 
 export function NostrProfileEditor(props: NostrProfileEditorProps) {
   const { accountId, state, onFieldChange, onSave, onImport, onCancel, onToggleAdvanced } = props;
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const copy = isChinese
+    ? {
+        title: "Nostr 资料",
+        subtitle: `为账号 \`${accountId}\` 发布 kind:0 资料。`,
+        account: `账号 ${accountId}`,
+        unsaved: "未保存",
+        synced: "已同步",
+        previewAlt: "Nostr 资料预览",
+        username: "用户名",
+        usernameHelp: "简短的资料名称。",
+        displayName: "显示名",
+        displayNameHelp: "展示给其他客户端的名称。",
+        avatarUrl: "头像地址",
+        avatarUrlHelp: "HTTPS 图片地址。",
+        bio: "简介",
+        bioPlaceholder: "介绍一下这个 relay 身份…",
+        bioHelp: "自由填写的资料说明。",
+        bannerUrl: "横幅地址",
+        website: "网站",
+        saveAndPublish: "保存并发布",
+        import: "导入",
+        hideAdvanced: "收起高级项",
+        showAdvanced: "显示高级项",
+        cancel: "取消",
+      }
+    : {
+        title: "Nostr Profile",
+        subtitle: `Publish a kind:0 profile for account \`${accountId}\`.`,
+        account: `account ${accountId}`,
+        unsaved: "unsaved",
+        synced: "synced",
+        previewAlt: "Nostr profile preview",
+        username: "Username",
+        usernameHelp: "Short profile name.",
+        displayName: "Display Name",
+        displayNameHelp: "Name shown to other clients.",
+        avatarUrl: "Avatar URL",
+        avatarUrlHelp: "HTTPS image URL.",
+        bio: "Bio",
+        bioPlaceholder: "Tell people about this relay identity...",
+        bioHelp: "Free-form profile description.",
+        bannerUrl: "Banner URL",
+        website: "Website",
+        saveAndPublish: "Save & Publish",
+        import: "Import",
+        hideAdvanced: "Hide Advanced",
+        showAdvanced: "Show Advanced",
+        cancel: "Cancel",
+      };
 
   return (
     <div className="channels-profile-editor">
       <div className="channels-profile-editor__header">
         <div>
-          <h4>Nostr Profile</h4>
-          <p>Publish a kind:0 profile for account `{accountId}`.</p>
+          <h4>{copy.title}</h4>
+          <p>{copy.subtitle}</p>
         </div>
         <div className="channels-card__meta">
-          <span>account {accountId}</span>
-          <span>{isDirty(state) ? "unsaved" : "synced"}</span>
+          <span>{copy.account}</span>
+          <span>{isDirty(state) ? copy.unsaved : copy.synced}</span>
         </div>
       </div>
 
@@ -79,7 +131,7 @@ export function NostrProfileEditor(props: NostrProfileEditorProps) {
         <div className="channels-profile-editor__preview">
           <img
             src={state.values.picture}
-            alt="Nostr profile preview"
+            alt={copy.previewAlt}
             onError={(event) => {
               event.currentTarget.style.display = "none";
             }}
@@ -89,37 +141,37 @@ export function NostrProfileEditor(props: NostrProfileEditorProps) {
 
       <div className="channels-profile-editor__grid">
         <Field
-          label="Username"
+          label={copy.username}
           field="name"
           state={state}
           placeholder="satoshi"
-          help="Short profile name."
+          help={copy.usernameHelp}
           onFieldChange={onFieldChange}
         />
         <Field
-          label="Display Name"
+          label={copy.displayName}
           field="displayName"
           state={state}
           placeholder="Satoshi Nakamoto"
-          help="Name shown to other clients."
+          help={copy.displayNameHelp}
           onFieldChange={onFieldChange}
         />
         <Field
-          label="Avatar URL"
+          label={copy.avatarUrl}
           field="picture"
           type="url"
           state={state}
           placeholder="https://example.com/avatar.png"
-          help="HTTPS image URL."
+          help={copy.avatarUrlHelp}
           onFieldChange={onFieldChange}
         />
         <Field
-          label="Bio"
+          label={copy.bio}
           field="about"
           type="textarea"
           state={state}
-          placeholder="Tell people about this relay identity..."
-          help="Free-form profile description."
+          placeholder={copy.bioPlaceholder}
+          help={copy.bioHelp}
           onFieldChange={onFieldChange}
         />
       </div>
@@ -127,7 +179,7 @@ export function NostrProfileEditor(props: NostrProfileEditorProps) {
       {state.showAdvanced && (
         <div className="channels-profile-editor__advanced">
           <Field
-            label="Banner URL"
+            label={copy.bannerUrl}
             field="banner"
             type="url"
             state={state}
@@ -135,7 +187,7 @@ export function NostrProfileEditor(props: NostrProfileEditorProps) {
             onFieldChange={onFieldChange}
           />
           <Field
-            label="Website"
+            label={copy.website}
             field="website"
             type="url"
             state={state}
@@ -161,17 +213,17 @@ export function NostrProfileEditor(props: NostrProfileEditorProps) {
 
       <div className="channels-actions">
         <Button type="button" size="sm" onClick={onSave} loading={state.saving} disabled={!isDirty(state)}>
-          Save & Publish
+          {copy.saveAndPublish}
         </Button>
         <Button type="button" size="sm" variant="secondary" onClick={onImport} loading={state.importing}>
           <Upload size={14} />
-          Import
+          {copy.import}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onToggleAdvanced}>
-          {state.showAdvanced ? "Hide Advanced" : "Show Advanced"}
+          {state.showAdvanced ? copy.hideAdvanced : copy.showAdvanced}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
+          {copy.cancel}
         </Button>
       </div>
     </div>

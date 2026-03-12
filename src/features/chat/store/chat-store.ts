@@ -13,6 +13,16 @@ import type {
   FallbackStatus,
 } from "@/features/chat/chat/tool-stream";
 
+export type QueuedChatMessage = {
+  id: string;
+  sessionKey: string;
+  agentId: string;
+  modelId: string | null;
+  text: string;
+  createdAt: number;
+  attachments: ChatAttachment[];
+};
+
 function coerceText(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "";
@@ -268,6 +278,62 @@ function normalizeMessagesForStore(messages: ChatMessage[]): ChatMessage[] {
   return dedupedCrossGap;
 }
 
+function areMessagesEqual(a: ChatMessage[] | undefined, b: ChatMessage[]): boolean {
+  const left = a ?? [];
+  if (left.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const prev = left[index];
+    const next = b[index];
+    if (
+      prev.id !== next.id ||
+      prev.role !== next.role ||
+      prev.timestamp !== next.timestamp
+    ) {
+      return false;
+    }
+
+    if (prev.role === "assistant" && next.role === "assistant") {
+      if (
+        prev.content !== next.content ||
+        prev.reasoning !== next.reasoning ||
+        prev.isStreaming !== next.isStreaming
+      ) {
+        return false;
+      }
+      continue;
+    }
+
+    if (prev.role === "user" && next.role === "user") {
+      if (prev.content !== next.content) {
+        return false;
+      }
+      continue;
+    }
+
+    if (prev.role === "system" && next.role === "system") {
+      if (prev.content !== next.content) {
+        return false;
+      }
+      continue;
+    }
+
+    if (prev.role === "tool" && next.role === "tool") {
+      if (
+        prev.toolCallId !== next.toolCallId ||
+        prev.toolName !== next.toolName ||
+        prev.status !== next.status ||
+        prev.error !== next.error ||
+        prev.output !== next.output
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function shouldKeepMessage(message: ChatMessage): boolean {
   if (message.role === "assistant") {
     const assistant = message as AssistantMessage;
@@ -343,6 +409,7 @@ export interface ChatState {
   attachmentsBySession: Record<string, ChatAttachment[]>;
   compactionStatusBySession: Record<string, CompactionStatus | null>;
   fallbackStatusBySession: Record<string, FallbackStatus | null>;
+  chatQueue: QueuedChatMessage[];
 
   // Streaming state
   isStreaming: boolean;
@@ -412,6 +479,12 @@ export interface ChatState {
   setDraft: (sessionKey: string, draft: string) => void;
   setAttachments: (sessionKey: string, attachments: ChatAttachment[]) => void;
   markSessionSent: (sessionKey: string, ts: number) => void;
+
+  // Actions: Queue
+  enqueueQueuedMessage: (item: QueuedChatMessage) => void;
+  prependQueuedMessage: (item: QueuedChatMessage) => void;
+  removeQueuedMessage: (id: string) => void;
+  remapQueuedSession: (fromSessionKey: string, toSessionKey: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -430,6 +503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   attachmentsBySession: {},
   compactionStatusBySession: {},
   fallbackStatusBySession: {},
+  chatQueue: [],
   isStreaming: false,
   streamingMessageId: null,
   streamingSessionKey: null,
@@ -441,7 +515,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // --- Selection ---
 
   selectAgent: (agentId) => {
-    set({ selectedAgentId: agentId });
+    set((state) => (state.selectedAgentId === agentId ? state : { selectedAgentId: agentId }));
   },
 
   selectSession: (sessionId) => {
@@ -508,12 +582,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMessages: (sessionKey, messages) => {
     const normalized = normalizeMessagesForStore(messages);
-    set((s) => ({
-      messagesBySession: {
-        ...s.messagesBySession,
-        [sessionKey]: normalized,
-      },
-    }));
+    set((s) => {
+      if (areMessagesEqual(s.messagesBySession[sessionKey], normalized)) {
+        return s;
+      }
+      return {
+        messagesBySession: {
+          ...s.messagesBySession,
+          [sessionKey]: normalized,
+        },
+      };
+    });
   },
 
   addMessage: (sessionKey, message) => {
@@ -524,6 +603,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => {
       const existing = s.messagesBySession[sessionKey] ?? [];
       const normalized = normalizeMessagesForStore([...existing, sanitizedMessage]);
+      if (areMessagesEqual(existing, normalized)) {
+        return s;
+      }
       return {
         messagesBySession: {
           ...s.messagesBySession,
@@ -554,6 +636,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachmentsBySession: attachmentRest,
         compactionStatusBySession: compactionRest,
         fallbackStatusBySession: fallbackRest,
+        chatQueue: s.chatQueue.filter((item) => item.sessionKey !== sessionKey),
       };
     });
   },
@@ -738,20 +821,60 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // --- Drafts ---
 
   setDraft: (sessionKey, draft) => {
-    set((s) => ({
-      draftBySession: { ...s.draftBySession, [sessionKey]: draft },
-    }));
+    set((s) =>
+      s.draftBySession[sessionKey] === draft
+        ? s
+        : {
+            draftBySession: { ...s.draftBySession, [sessionKey]: draft },
+          });
   },
 
   setAttachments: (sessionKey, attachments) => {
-    set((s) => ({
-      attachmentsBySession: { ...s.attachmentsBySession, [sessionKey]: attachments },
-    }));
+    set((s) =>
+      s.attachmentsBySession[sessionKey] === attachments
+        ? s
+        : {
+            attachmentsBySession: { ...s.attachmentsBySession, [sessionKey]: attachments },
+          });
   },
 
   markSessionSent: (sessionKey, ts) => {
+    set((s) =>
+      s.lastSentAtBySession[sessionKey] === ts
+        ? s
+        : {
+            lastSentAtBySession: { ...s.lastSentAtBySession, [sessionKey]: ts },
+          });
+  },
+
+  enqueueQueuedMessage: (item) => {
     set((s) => ({
-      lastSentAtBySession: { ...s.lastSentAtBySession, [sessionKey]: ts },
+      chatQueue: [...s.chatQueue, item],
+    }));
+  },
+
+  prependQueuedMessage: (item) => {
+    set((s) => ({
+      chatQueue: [item, ...s.chatQueue],
+    }));
+  },
+
+  removeQueuedMessage: (id) => {
+    set((s) => ({
+      chatQueue: s.chatQueue.filter((item) => item.id !== id),
+    }));
+  },
+
+  remapQueuedSession: (fromSessionKey, toSessionKey) => {
+    if (fromSessionKey === toSessionKey) {
+      return;
+    }
+    set((s) => ({
+      chatQueue: s.chatQueue.map((item) =>
+        item.sessionKey === fromSessionKey
+          ? { ...item, sessionKey: toSessionKey }
+          : item,
+      ),
     }));
   },
 }));

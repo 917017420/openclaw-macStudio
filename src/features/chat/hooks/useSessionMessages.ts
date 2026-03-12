@@ -83,7 +83,11 @@ export function useSessionMessages(sessionKey: string | null) {
       return;
     }
 
-    store.setMessages(sessionKey, mergeServerWithLocal(serverMessages, currentMessages));
+    const merged = mergeServerWithLocal(serverMessages, currentMessages);
+    if (merged === currentMessages) {
+      return;
+    }
+    store.setMessages(sessionKey, merged);
   }, [query.data, sessionKey]);
 
   return query;

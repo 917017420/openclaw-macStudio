@@ -1,3 +1,5 @@
+import { getAppCopy } from "@/features/preferences/store";
+
 interface LoadingProps {
   message?: string;
   size?: "sm" | "md" | "lg";
@@ -10,6 +12,7 @@ const sizeMap = {
 };
 
 export function Loading({ message, size = "md" }: LoadingProps) {
+  const copy = getAppCopy();
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-8">
       <svg
@@ -31,9 +34,7 @@ export function Loading({ message, size = "md" }: LoadingProps) {
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
         />
       </svg>
-      {message && (
-        <p className="text-sm text-text-secondary">{message}</p>
-      )}
+      <p className="text-sm text-text-secondary">{message ?? copy.common.loading}</p>
     </div>
   );
 }

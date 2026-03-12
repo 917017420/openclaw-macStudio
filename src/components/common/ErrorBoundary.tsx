@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui";
+import { getAppCopy } from "@/features/preferences/store";
 
 interface Props {
   children: ReactNode;
@@ -33,18 +34,19 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
+      const copy = getAppCopy();
 
       return (
         <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
           <AlertTriangle size={48} className="text-status-warning" />
           <h2 className="text-lg font-semibold text-text-primary">
-            Something went wrong
+            {copy.errorBoundary.title}
           </h2>
           <p className="max-w-md text-center text-sm text-text-secondary">
-            {this.state.error?.message ?? "An unexpected error occurred"}
+            {this.state.error?.message ?? copy.errorBoundary.fallback}
           </p>
           <Button variant="secondary" onClick={this.handleReset}>
-            Try Again
+            {copy.errorBoundary.retry}
           </Button>
         </div>
       );

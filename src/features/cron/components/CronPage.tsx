@@ -18,6 +18,7 @@ import {
 import { Button, Card, StatusBadge } from "@/components/ui";
 import { useAgentsDirectory } from "@/features/chat/hooks/useAgents";
 import { useConnectionStore } from "@/features/connection/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import { formatRelativeTime } from "@/lib/utils";
 import "./cron.css";
@@ -477,25 +478,28 @@ async function loadCronSupport() {
 }
 
 function formatDateTime(timestamp?: number | null) {
-  if (timestamp == null) return "n/a";
-  return new Date(timestamp).toLocaleString();
+  if (timestamp == null) {
+    return isChineseLanguage(useAppPreferencesStore.getState().language) ? "暂无" : "n/a";
+  }
+  const locale = useAppPreferencesStore.getState().language;
+  return new Date(timestamp).toLocaleString(locale);
 }
 
-function formatDuration(durationMs?: number) {
+function formatDuration(durationMs?: number, isChinese = false) {
   if (!durationMs || durationMs <= 0) {
-    return "n/a";
+    return isChinese ? "暂无" : "n/a";
   }
   if (durationMs < 1_000) return `${durationMs} ms`;
   if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(1)} s`;
-  return `${(durationMs / 60_000).toFixed(1)} min`;
+  return isChinese ? `${(durationMs / 60_000).toFixed(1)} 分钟` : `${(durationMs / 60_000).toFixed(1)} min`;
 }
 
-function formatCount(value?: number | null) {
-  return value == null ? "n/a" : value.toLocaleString();
+function formatCount(value?: number | null, isChinese = false) {
+  return value == null ? (isChinese ? "暂无" : "n/a") : value.toLocaleString();
 }
 
-function formatRelativeTimestamp(timestamp?: number | null) {
-  if (timestamp == null) return "n/a";
+function formatRelativeTimestamp(timestamp?: number | null, isChinese = false) {
+  if (timestamp == null) return isChinese ? "暂无" : "n/a";
   return formatRelativeTime(timestamp);
 }
 
@@ -518,18 +522,18 @@ function getJobLastStatus(job: CronJob): CronRunStatus | "unknown" {
   return "unknown";
 }
 
-function formatRunStatusLabel(status: CronRunStatus | "unknown") {
-  if (status === "ok") return "Succeeded";
-  if (status === "error") return "Failed";
-  if (status === "skipped") return "Skipped";
-  return "Unknown";
+function formatRunStatusLabel(status: CronRunStatus | "unknown", isChinese = false) {
+  if (status === "ok") return isChinese ? "成功" : "Succeeded";
+  if (status === "error") return isChinese ? "失败" : "Failed";
+  if (status === "skipped") return isChinese ? "已跳过" : "Skipped";
+  return isChinese ? "未知" : "Unknown";
 }
 
-function formatDeliveryStatusLabel(status?: CronDeliveryStatus) {
-  if (status === "delivered") return "Delivered";
-  if (status === "not-delivered") return "Not delivered";
-  if (status === "not-requested") return "Not requested";
-  return "Unknown";
+function formatDeliveryStatusLabel(status?: CronDeliveryStatus, isChinese = false) {
+  if (status === "delivered") return isChinese ? "已投递" : "Delivered";
+  if (status === "not-delivered") return isChinese ? "未投递" : "Not delivered";
+  if (status === "not-requested") return isChinese ? "未请求投递" : "Not requested";
+  return isChinese ? "未知" : "Unknown";
 }
 
 function runTone(status: CronRunStatus | "unknown") {
@@ -539,60 +543,86 @@ function runTone(status: CronRunStatus | "unknown") {
   return "soft";
 }
 
-function describeSchedule(schedule: CronSchedule) {
+function describeSchedule(schedule: CronSchedule, isChinese = false) {
   if (schedule.kind === "at") {
-    return `Runs once at ${new Date(schedule.at).toLocaleString()}`;
+    const locale = useAppPreferencesStore.getState().language;
+    return isChinese
+      ? `将在 ${new Date(schedule.at).toLocaleString(locale)} 执行一次`
+      : `Runs once at ${new Date(schedule.at).toLocaleString(locale)}`;
   }
   if (schedule.kind === "every") {
     const minutes = Math.round(schedule.everyMs / 60_000);
     if (minutes % (60 * 24) === 0) {
-      return `Every ${minutes / (60 * 24)} day${minutes === 60 * 24 ? "" : "s"}`;
+      return isChinese
+        ? `每 ${minutes / (60 * 24)} 天`
+        : `Every ${minutes / (60 * 24)} day${minutes === 60 * 24 ? "" : "s"}`;
     }
     if (minutes % 60 === 0) {
-      return `Every ${minutes / 60} hour${minutes === 60 ? "" : "s"}`;
+      return isChinese
+        ? `每 ${minutes / 60} 小时`
+        : `Every ${minutes / 60} hour${minutes === 60 ? "" : "s"}`;
     }
-    return `Every ${minutes} minute${minutes === 1 ? "" : "s"}`;
+    return isChinese ? `每 ${minutes} 分钟` : `Every ${minutes} minute${minutes === 1 ? "" : "s"}`;
   }
-  const exact = schedule.staggerMs === 0 ? " · exact" : "";
-  const stagger = schedule.staggerMs && schedule.staggerMs > 0 ? ` · stagger ${formatDuration(schedule.staggerMs)}` : "";
+  const exact = schedule.staggerMs === 0 ? (isChinese ? " · 精确" : " · exact") : "";
+  const stagger =
+    schedule.staggerMs && schedule.staggerMs > 0
+      ? ` · ${isChinese ? "错峰" : "stagger"} ${formatDuration(schedule.staggerMs, isChinese)}`
+      : "";
   return `${schedule.expr}${schedule.tz ? ` · ${schedule.tz}` : ""}${exact}${stagger}`;
 }
 
-function describePayload(payload: CronPayload) {
+function describePayload(payload: CronPayload, isChinese = false) {
   if (payload.kind === "systemEvent") {
-    return payload.text || "System event";
+    return payload.text || (isChinese ? "系统事件" : "System event");
   }
-  return payload.message || "Agent turn";
+  return payload.message || (isChinese ? "智能体轮次" : "Agent turn");
 }
 
-function describeDelivery(job: CronJob) {
+function describeDelivery(job: CronJob, isChinese = false) {
   const delivery = job.delivery;
   if (!delivery || delivery.mode === "none") {
-    return "No delivery";
+    return isChinese ? "不投递" : "No delivery";
   }
   if (delivery.mode === "webhook") {
     return delivery.to ? `Webhook → ${delivery.to}` : "Webhook";
   }
   const channel = delivery.channel?.trim() || DEFAULT_CHANNEL;
-  return delivery.to ? `Announce via ${channel} → ${delivery.to}` : `Announce via ${channel}`;
+  return isChinese
+    ? delivery.to
+      ? `通过 ${channel} 广播 → ${delivery.to}`
+      : `通过 ${channel} 广播`
+    : delivery.to
+      ? `Announce via ${channel} → ${delivery.to}`
+      : `Announce via ${channel}`;
 }
 
-function describeFailureAlert(job: CronJob) {
+function describeFailureAlert(job: CronJob, isChinese = false) {
   if (job.failureAlert === false) {
-    return "Failure alerts disabled";
+    return isChinese ? "失败告警已关闭" : "Failure alerts disabled";
   }
   if (!job.failureAlert) {
-    return "Gateway defaults";
+    return isChinese ? "网关默认值" : "Gateway defaults";
   }
   const parts = [
-    job.failureAlert.after ? `after ${job.failureAlert.after} failures` : "custom threshold",
-    job.failureAlert.mode ?? "announce",
+    job.failureAlert.after
+      ? isChinese
+        ? `${job.failureAlert.after} 次失败后告警`
+        : `after ${job.failureAlert.after} failures`
+      : isChinese
+        ? "自定义阈值"
+        : "custom threshold",
+    isChinese
+      ? (job.failureAlert.mode ?? "announce") === "webhook"
+        ? "Webhook"
+        : "广播"
+      : (job.failureAlert.mode ?? "announce"),
   ];
   if (job.failureAlert.channel) {
-    parts.push(`channel ${job.failureAlert.channel}`);
+    parts.push(isChinese ? `频道 ${job.failureAlert.channel}` : `channel ${job.failureAlert.channel}`);
   }
   if (job.failureAlert.to) {
-    parts.push(`to ${job.failureAlert.to}`);
+    parts.push(isChinese ? `目标 ${job.failureAlert.to}` : `to ${job.failureAlert.to}`);
   }
   return parts.join(" · ");
 }
@@ -602,15 +632,15 @@ function toNumber(value: string, fallback: number) {
   return Number.isFinite(next) ? next : fallback;
 }
 
-function buildSchedule(form: CronFormState): CronSchedule {
+function buildSchedule(form: CronFormState, isChinese = false): CronSchedule {
   if (form.scheduleKind === "at") {
     const value = form.scheduleAt.trim();
     if (!value) {
-      throw new Error("Pick a run time for the one-shot schedule.");
+      throw new Error(isChinese ? "请为单次任务选择执行时间。" : "Pick a run time for the one-shot schedule.");
     }
     const timestamp = Date.parse(value);
     if (!Number.isFinite(timestamp)) {
-      throw new Error("Invalid date/time for cron job.");
+      throw new Error(isChinese ? "定时任务日期或时间无效。" : "Invalid date/time for cron job.");
     }
     return { kind: "at", at: new Date(timestamp).toISOString() };
   }
@@ -618,7 +648,7 @@ function buildSchedule(form: CronFormState): CronSchedule {
   if (form.scheduleKind === "every") {
     const amount = toNumber(form.everyAmount, 0);
     if (amount <= 0) {
-      throw new Error("Repeat interval must be greater than zero.");
+      throw new Error(isChinese ? "重复间隔必须大于 0。" : "Repeat interval must be greater than zero.");
     }
     const multiplier =
       form.everyUnit === "minutes" ? 60_000 : form.everyUnit === "hours" ? 3_600_000 : 86_400_000;
@@ -627,7 +657,7 @@ function buildSchedule(form: CronFormState): CronSchedule {
 
   const expr = form.cronExpr.trim();
   if (!expr) {
-    throw new Error("Cron expression is required.");
+    throw new Error(isChinese ? "Cron 表达式必填。" : "Cron expression is required.");
   }
   if (form.scheduleExact) {
     return {
@@ -653,17 +683,17 @@ function buildSchedule(form: CronFormState): CronSchedule {
   };
 }
 
-function buildPayload(form: CronFormState): CronPayload {
+function buildPayload(form: CronFormState, isChinese = false): CronPayload {
   if (form.payloadKind === "systemEvent") {
     const text = form.payloadText.trim();
     if (!text) {
-      throw new Error("System event text is required.");
+      throw new Error(isChinese ? "系统事件文本必填。" : "System event text is required.");
     }
     return { kind: "systemEvent", text };
   }
   const message = form.payloadText.trim();
   if (!message) {
-    throw new Error("Agent turn message is required.");
+    throw new Error(isChinese ? "智能体轮次消息必填。" : "Agent turn message is required.");
   }
   const payload: Extract<CronPayload, { kind: "agentTurn" }> = {
     kind: "agentTurn",
@@ -803,9 +833,9 @@ function formFromJob(job: CronJob): CronFormState {
   return next;
 }
 
-function buildCloneName(name: string, existingNames: string[]) {
+function buildCloneName(name: string, existingNames: string[], isChinese = false) {
   const seen = new Set(existingNames.map((entry) => entry.trim().toLowerCase()));
-  const base = `${name} copy`;
+  const base = isChinese ? `${name} 副本` : `${name} copy`;
   if (!seen.has(base.toLowerCase())) {
     return base;
   }
@@ -816,109 +846,117 @@ function buildCloneName(name: string, existingNames: string[]) {
   return `${base} ${index}`;
 }
 
-function validateCronForm(form: CronFormState, supportsAnnounce: boolean): CronFieldErrors {
+function validateCronForm(form: CronFormState, supportsAnnounce: boolean, isChinese = false): CronFieldErrors {
   const errors: CronFieldErrors = {};
   if (!form.name.trim()) {
-    errors.name = "Name is required.";
+    errors.name = isChinese ? "名称必填。" : "Name is required.";
   }
   if (form.scheduleKind === "every") {
     const amount = toNumber(form.everyAmount.trim(), 0);
     if (amount <= 0) {
-      errors.everyAmount = "Repeat interval must be greater than zero.";
+      errors.everyAmount = isChinese ? "重复间隔必须大于 0。" : "Repeat interval must be greater than zero.";
     }
   }
   if (form.scheduleKind === "at") {
     const timestamp = Date.parse(form.scheduleAt.trim());
     if (!Number.isFinite(timestamp)) {
-      errors.scheduleAt = "Choose a valid one-shot date and time.";
+      errors.scheduleAt = isChinese ? "请选择有效的单次执行日期和时间。" : "Choose a valid one-shot date and time.";
     }
   }
   if (form.scheduleKind === "cron") {
     if (!form.cronExpr.trim()) {
-      errors.cronExpr = "Cron expression is required.";
+      errors.cronExpr = isChinese ? "Cron 表达式必填。" : "Cron expression is required.";
     }
     if (!form.scheduleExact && form.staggerAmount.trim()) {
       const stagger = toNumber(form.staggerAmount.trim(), 0);
       if (stagger <= 0) {
-        errors.staggerAmount = "Stagger must be greater than zero.";
+        errors.staggerAmount = isChinese ? "错峰值必须大于 0。" : "Stagger must be greater than zero.";
       }
     }
   }
   if (!form.payloadText.trim()) {
     errors.payloadText =
       form.payloadKind === "systemEvent"
-        ? "System event text is required."
-        : "Agent turn message is required.";
+        ? isChinese
+          ? "系统事件文本必填。"
+          : "System event text is required."
+        : isChinese
+          ? "智能体轮次消息必填。"
+          : "Agent turn message is required.";
   }
   if (form.payloadKind === "agentTurn" && form.timeoutSeconds.trim()) {
     const timeout = toNumber(form.timeoutSeconds.trim(), 0);
     if (timeout <= 0) {
-      errors.timeoutSeconds = "Timeout must be greater than zero.";
+      errors.timeoutSeconds = isChinese ? "超时时间必须大于 0。" : "Timeout must be greater than zero.";
     }
   }
   if (form.deliveryMode === "announce" && !supportsAnnounce) {
-    errors.deliveryMode = "Announce delivery requires an isolated agent-turn job.";
+    errors.deliveryMode = isChinese
+      ? "广播投递仅适用于隔离会话的智能体轮次任务。"
+      : "Announce delivery requires an isolated agent-turn job.";
   }
   if (form.deliveryMode === "webhook") {
     const target = form.deliveryTo.trim();
     if (!target) {
-      errors.deliveryTo = "Webhook URL is required.";
+      errors.deliveryTo = isChinese ? "Webhook URL 必填。" : "Webhook URL is required.";
     } else if (!/^https?:\/\//i.test(target)) {
-      errors.deliveryTo = "Webhook URL must start with http:// or https://.";
+      errors.deliveryTo = isChinese
+        ? "Webhook URL 必须以 http:// 或 https:// 开头。"
+        : "Webhook URL must start with http:// or https://.";
     }
   }
   if (form.failureAlertMode === "custom") {
     const after = toNumber(form.failureAlertAfter.trim(), 0);
     if (after <= 0) {
-      errors.failureAlertAfter = "Failure alert threshold must be greater than zero.";
+      errors.failureAlertAfter = isChinese ? "失败告警阈值必须大于 0。" : "Failure alert threshold must be greater than zero.";
     }
     if (form.failureAlertCooldownSeconds.trim()) {
       const cooldown = toNumber(form.failureAlertCooldownSeconds.trim(), -1);
       if (cooldown < 0) {
-        errors.failureAlertCooldownSeconds = "Cooldown must be 0 or greater.";
+        errors.failureAlertCooldownSeconds = isChinese ? "冷却时间必须大于或等于 0。" : "Cooldown must be 0 or greater.";
       }
     }
   }
   return errors;
 }
 
-function orderedBlockingFields(errors: CronFieldErrors) {
+function orderedBlockingFields(errors: CronFieldErrors, isChinese = false) {
   const labels: Record<CronFieldKey, string> = {
-    name: "Name",
-    description: "Description",
-    enabled: "Enabled",
-    agentId: "Agent ID",
-    sessionKey: "Session key",
-    scheduleKind: "Schedule type",
-    scheduleAt: "Run at",
-    everyAmount: "Repeat every",
-    everyUnit: "Repeat unit",
-    cronExpr: "Cron expression",
-    cronTz: "Timezone",
-    scheduleExact: "Exact schedule",
-    staggerAmount: "Stagger",
-    staggerUnit: "Stagger unit",
-    sessionTarget: "Session target",
-    wakeMode: "Wake mode",
-    payloadKind: "Payload type",
-    payloadText: "Payload text",
-    payloadModel: "Model",
-    payloadThinking: "Thinking",
-    timeoutSeconds: "Timeout",
-    payloadLightContext: "Light context",
-    deliveryMode: "Delivery mode",
-    deliveryChannel: "Delivery channel",
-    deliveryTo: "Delivery target",
-    deliveryAccountId: "Delivery account ID",
-    deliveryBestEffort: "Best effort delivery",
-    failureAlertMode: "Failure alert mode",
-    failureAlertAfter: "Failure alert threshold",
-    failureAlertCooldownSeconds: "Failure alert cooldown",
-    failureAlertChannel: "Failure alert channel",
-    failureAlertTo: "Failure alert recipient",
-    failureAlertDeliveryMode: "Failure alert mode",
-    failureAlertAccountId: "Failure alert account ID",
-    deleteAfterRun: "Delete after run",
+    name: isChinese ? "名称" : "Name",
+    description: isChinese ? "描述" : "Description",
+    enabled: isChinese ? "启用" : "Enabled",
+    agentId: isChinese ? "智能体 ID" : "Agent ID",
+    sessionKey: isChinese ? "会话 Key" : "Session key",
+    scheduleKind: isChinese ? "计划类型" : "Schedule type",
+    scheduleAt: isChinese ? "执行时间" : "Run at",
+    everyAmount: isChinese ? "重复间隔" : "Repeat every",
+    everyUnit: isChinese ? "重复单位" : "Repeat unit",
+    cronExpr: isChinese ? "Cron 表达式" : "Cron expression",
+    cronTz: isChinese ? "时区" : "Timezone",
+    scheduleExact: isChinese ? "精确计划" : "Exact schedule",
+    staggerAmount: isChinese ? "错峰" : "Stagger",
+    staggerUnit: isChinese ? "错峰单位" : "Stagger unit",
+    sessionTarget: isChinese ? "会话目标" : "Session target",
+    wakeMode: isChinese ? "唤醒模式" : "Wake mode",
+    payloadKind: isChinese ? "负载类型" : "Payload type",
+    payloadText: isChinese ? "负载文本" : "Payload text",
+    payloadModel: isChinese ? "模型" : "Model",
+    payloadThinking: isChinese ? "思考" : "Thinking",
+    timeoutSeconds: isChinese ? "超时" : "Timeout",
+    payloadLightContext: isChinese ? "轻量上下文" : "Light context",
+    deliveryMode: isChinese ? "投递模式" : "Delivery mode",
+    deliveryChannel: isChinese ? "投递频道" : "Delivery channel",
+    deliveryTo: isChinese ? "投递目标" : "Delivery target",
+    deliveryAccountId: isChinese ? "投递账号 ID" : "Delivery account ID",
+    deliveryBestEffort: isChinese ? "尽力投递" : "Best effort delivery",
+    failureAlertMode: isChinese ? "失败告警模式" : "Failure alert mode",
+    failureAlertAfter: isChinese ? "失败告警阈值" : "Failure alert threshold",
+    failureAlertCooldownSeconds: isChinese ? "失败告警冷却时间" : "Failure alert cooldown",
+    failureAlertChannel: isChinese ? "失败告警频道" : "Failure alert channel",
+    failureAlertTo: isChinese ? "失败告警接收目标" : "Failure alert recipient",
+    failureAlertDeliveryMode: isChinese ? "失败告警模式" : "Failure alert mode",
+    failureAlertAccountId: isChinese ? "失败告警账号 ID" : "Failure alert account ID",
+    deleteAfterRun: isChinese ? "执行后删除" : "Delete after run",
   };
   return [
     "name",
@@ -962,33 +1000,43 @@ function renderFieldHint(message?: string) {
   return message ? <div className="cron-field__hint">{message}</div> : null;
 }
 
-function formatScheduleKindLabel(kind: CronSchedule["kind"]) {
-  if (kind === "every") return "Interval";
-  if (kind === "at") return "One-shot";
+function formatScheduleKindLabel(kind: CronSchedule["kind"], isChinese = false) {
+  if (kind === "every") return isChinese ? "间隔" : "Interval";
+  if (kind === "at") return isChinese ? "单次" : "One-shot";
   return "Cron";
 }
 
-function formatPayloadKindLabel(kind: CronPayload["kind"]) {
-  return kind === "agentTurn" ? "Agent turn" : "System event";
+function formatPayloadKindLabel(kind: CronPayload["kind"], isChinese = false) {
+  return kind === "agentTurn" ? (isChinese ? "智能体轮次" : "Agent turn") : isChinese ? "系统事件" : "System event";
 }
 
-function formatSessionTargetLabel(target: CronJob["sessionTarget"] | CronFormState["sessionTarget"]) {
-  return target === "isolated" ? "Isolated" : "Main";
+function formatSessionTargetLabel(target: CronJob["sessionTarget"] | CronFormState["sessionTarget"], isChinese = false) {
+  return target === "isolated" ? (isChinese ? "隔离" : "Isolated") : isChinese ? "主会话" : "Main";
 }
 
-function formatWakeModeLabel(mode: CronJob["wakeMode"] | CronFormState["wakeMode"]) {
-  return mode === "next-heartbeat" ? "Next heartbeat" : "Immediate";
+function formatWakeModeLabel(mode: CronJob["wakeMode"] | CronFormState["wakeMode"], isChinese = false) {
+  return mode === "next-heartbeat" ? (isChinese ? "下次心跳" : "Next heartbeat") : isChinese ? "立即" : "Immediate";
 }
 
-function formatJobsSortLabel(sortBy: CronJobsSortBy, sortDir: CronSortDir) {
+function formatJobsSortLabel(sortBy: CronJobsSortBy, sortDir: CronSortDir, isChinese = false) {
   const sortLabel =
-    sortBy === "nextRunAtMs" ? "Next run" : sortBy === "updatedAtMs" ? "Recently updated" : "Name";
-  return `${sortLabel} · ${sortDir === "asc" ? "Ascending" : "Descending"}`;
+    sortBy === "nextRunAtMs"
+      ? isChinese
+        ? "下次运行"
+        : "Next run"
+      : sortBy === "updatedAtMs"
+        ? isChinese
+          ? "最近更新"
+          : "Recently updated"
+        : isChinese
+          ? "名称"
+          : "Name";
+  return `${sortLabel} · ${sortDir === "asc" ? (isChinese ? "升序" : "Ascending") : isChinese ? "降序" : "Descending"}`;
 }
 
-function formatDateTimeWithRelative(timestamp?: number | null) {
-  if (timestamp == null) return "n/a";
-  return `${formatDateTime(timestamp)} · ${formatRelativeTimestamp(timestamp)}`;
+function formatDateTimeWithRelative(timestamp?: number | null, isChinese = false) {
+  if (timestamp == null) return isChinese ? "暂无" : "n/a";
+  return `${formatDateTime(timestamp)} · ${formatRelativeTimestamp(timestamp, isChinese)}`;
 }
 
 function CheckboxCopy(props: { label: string; hint: string }) {
@@ -1032,6 +1080,9 @@ export function CronPage() {
   const queryClient = useQueryClient();
   const isConnected = useConnectionStore((state) => state.state === "connected");
   const agentsQuery = useAgentsDirectory();
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const t = (zh: string, en: string) => (isChinese ? zh : en);
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedRunKey, setSelectedRunKey] = useState<string | null>(null);
@@ -1167,8 +1218,11 @@ export function CronPage() {
   }, [runs, selectedRunKey]);
 
   const supportsAnnounce = form.sessionTarget === "isolated" && form.payloadKind === "agentTurn";
-  const fieldErrors = useMemo(() => validateCronForm(form, supportsAnnounce), [form, supportsAnnounce]);
-  const blockingFields = useMemo(() => orderedBlockingFields(fieldErrors), [fieldErrors]);
+  const fieldErrors = useMemo(
+    () => validateCronForm(form, supportsAnnounce, isChinese),
+    [form, isChinese, supportsAnnounce],
+  );
+  const blockingFields = useMemo(() => orderedBlockingFields(fieldErrors, isChinese), [fieldErrors, isChinese]);
   const canSubmit = blockingFields.length === 0;
 
   const agentSuggestions = useMemo(() => {
@@ -1222,6 +1276,8 @@ export function CronPage() {
     () => Object.fromEntries((supportQuery.data?.channels ?? []).map((channel) => [channel.id, channel.label])),
     [supportQuery.data?.channels],
   );
+  const resolveChannelLabel = (channelId: string) =>
+    channelId === DEFAULT_CHANNEL ? t("上次使用的频道", "last used channel") : channelLabelById[channelId] ?? channelId;
 
   const pageBusy =
     statusQuery.isFetching || supportQuery.isFetching || jobsQuery.isFetching || runsQuery.isFetching;
@@ -1269,15 +1325,15 @@ export function CronPage() {
         sessionKey: form.sessionKey.trim() || undefined,
         enabled: form.enabled,
         deleteAfterRun: form.deleteAfterRun,
-        schedule: buildSchedule(form),
+        schedule: buildSchedule(form, isChinese),
         sessionTarget: form.sessionTarget,
         wakeMode: form.wakeMode,
-        payload: buildPayload(form),
+        payload: buildPayload(form, isChinese),
         delivery: buildDelivery(form, supportsAnnounce),
         failureAlert: buildFailureAlert(form),
       };
       if (!payload.name) {
-        throw new Error("Cron job name is required.");
+        throw new Error(t("定时任务名称必填。", "Cron job name is required."));
       }
       if (editingJobId) {
         return gateway.request<unknown>("cron.update", { id: editingJobId, patch: payload });
@@ -1288,7 +1344,7 @@ export function CronPage() {
       const record = asRecord(result);
       const nextId = readString(record, "id");
       setSubmitError(null);
-      setNotice({ kind: "info", text: editingJobId ? "Cron job updated." : "Cron job created." });
+      setNotice({ kind: "info", text: editingJobId ? t("定时任务已更新。", "Cron job updated.") : t("定时任务已创建。", "Cron job created.") });
       setEditingJobId(null);
       setForm(defaultCronForm());
       if (nextId) {
@@ -1297,7 +1353,7 @@ export function CronPage() {
       await refreshAll();
     },
     onError: (error) => {
-      setSubmitError(formatQueryError(error) ?? "Unable to save cron job.");
+      setSubmitError(formatQueryError(error) ?? t("无法保存定时任务。", "Unable to save cron job."));
     },
   });
 
@@ -1316,9 +1372,9 @@ export function CronPage() {
     },
     onSuccess: async (_result, action) => {
       if (action.type === "wake") {
-        setWakeMessage("Wake signal sent.");
+        setWakeMessage(t("唤醒信号已发送。", "Wake signal sent."));
       } else if (action.type === "delete") {
-        setNotice({ kind: "info", text: `Removed ${action.job.name}.` });
+        setNotice({ kind: "info", text: isChinese ? `已删除 ${action.job.name}。` : `Removed ${action.job.name}.` });
         if (selectedJobId === action.job.id) {
           setSelectedJobId(null);
         }
@@ -1327,14 +1383,24 @@ export function CronPage() {
           setForm(defaultCronForm());
         }
       } else if (action.type === "toggle") {
-        setNotice({ kind: "info", text: `${action.job.name} ${action.enabled ? "enabled" : "disabled"}.` });
+        setNotice({
+          kind: "info",
+          text: isChinese
+            ? `${action.job.name}已${action.enabled ? "启用" : "停用"}。`
+            : `${action.job.name} ${action.enabled ? "enabled" : "disabled"}.`,
+        });
       } else {
-        setNotice({ kind: "info", text: `Triggered ${action.job.name} (${action.mode}).` });
+        setNotice({
+          kind: "info",
+          text: isChinese
+            ? `已触发 ${action.job.name}（${action.mode === "force" ? "强制运行" : "到期运行"}）。`
+            : `Triggered ${action.job.name} (${action.mode}).`,
+        });
       }
       await refreshAll();
     },
     onError: (error, action) => {
-      const message = formatQueryError(error) ?? "Cron action failed.";
+      const message = formatQueryError(error) ?? t("定时任务操作失败。", "Cron action failed.");
       if (action.type === "wake") {
         setWakeMessage(message);
       } else {
@@ -1355,12 +1421,15 @@ export function CronPage() {
 
   function startCloning(job: CronJob) {
     const clone = formFromJob(job);
-    clone.name = buildCloneName(job.name, allLoadedJobs.map((entry) => entry.name));
+    clone.name = buildCloneName(job.name, allLoadedJobs.map((entry) => entry.name), isChinese);
     setEditingJobId(null);
     setSelectedJobId(job.id);
     setForm(clone);
     setSubmitError(null);
-    setNotice({ kind: "info", text: `Prepared a clone of ${job.name}.` });
+    setNotice({
+      kind: "info",
+      text: isChinese ? `已准备 ${job.name} 的副本。` : `Prepared a clone of ${job.name}.`,
+    });
   }
 
   function resetForm() {
@@ -1396,9 +1465,9 @@ export function CronPage() {
     return (
       <div className="cron-page cron-page--empty">
         <CalendarClock size={40} className="text-text-tertiary" />
-        <h2 className="workspace-title">Cron</h2>
+        <h2 className="workspace-title">{t("定时任务", "Cron")}</h2>
         <p className="workspace-subtitle">
-          Connect a gateway to manage scheduled jobs, browse run history, and mirror the upstream cron workspace.
+          {t("先连接网关，再管理定时任务、查看运行历史，并对齐官方 cron 工作区。", "Connect a gateway to manage scheduled jobs, browse run history, and mirror the upstream cron workspace.")}
         </p>
       </div>
     );
@@ -1409,14 +1478,14 @@ export function CronPage() {
       <Card className="cron-toolbar-shell">
         <div className="cron-toolbar">
           <div className="cron-toolbar__copy">
-            <div className="cron-toolbar__eyebrow">Gateway Scheduler</div>
-            <h2 className="workspace-title">Cron</h2>
+            <div className="cron-toolbar__eyebrow">{t("网关调度器", "Gateway Scheduler")}</div>
+            <h2 className="workspace-title">{t("定时任务", "Cron")}</h2>
             <p className="workspace-subtitle">
-              Review schedules, recent executions, and delivery health in one dense workspace.
+              {t("在一个高密度工作区里查看计划、最近执行记录和投递健康状态。", "Review schedules, recent executions, and delivery health in one dense workspace.")}
             </p>
             {statusQuery.data?.storePath && (
               <div className="cron-store-path">
-                <span className="cron-store-path__label">Store</span>
+                <span className="cron-store-path__label">{t("存储", "Store")}</span>
                 <span className="cron-store-path__value">{statusQuery.data.storePath}</span>
               </div>
             )}
@@ -1424,22 +1493,22 @@ export function CronPage() {
           <div className="cron-toolbar__actions">
             <div className="cron-toolbar__meta-group">
               <div className="cron-toolbar__meta">
-                <span>Gateway</span>
-                <strong>{statusQuery.data?.enabled ? "Enabled" : "Disabled"}</strong>
+                <span>{t("网关", "Gateway")}</span>
+                <strong>{statusQuery.data?.enabled ? t("已启用", "Enabled") : t("已停用", "Disabled")}</strong>
               </div>
               <div className="cron-toolbar__meta">
-                <span>Selected Scope</span>
-                <strong>{runsScope === "all" ? "All jobs" : selectedJob?.name ?? "Selected job"}</strong>
+                <span>{t("当前范围", "Selected Scope")}</span>
+                <strong>{runsScope === "all" ? t("全部任务", "All jobs") : selectedJob?.name ?? t("当前任务", "Selected job")}</strong>
               </div>
             </div>
             <div className="cron-toolbar__cta">
               <Button variant="secondary" onClick={() => void refreshAll()} loading={pageBusy}>
                 <RefreshCw size={14} />
-                Refresh
+                {t("刷新", "Refresh")}
               </Button>
               <Button variant="secondary" onClick={resetForm}>
                 <Plus size={14} />
-                New Job
+                {t("新建任务", "New Job")}
               </Button>
             </div>
           </div>
@@ -1460,29 +1529,51 @@ export function CronPage() {
 
       <section className="cron-summary-strip">
         <MetricCard
-          label="Cron state"
-          value={statusQuery.data?.enabled ? "Enabled" : "Disabled"}
-          subcopy={statusQuery.data?.nextWakeAtMs ? formatRelativeTimestamp(statusQuery.data.nextWakeAtMs) : "No wake scheduled"}
+          label={t("定时状态", "Cron state")}
+          value={statusQuery.data?.enabled ? t("已启用", "Enabled") : t("已停用", "Disabled")}
+          subcopy={
+            statusQuery.data?.nextWakeAtMs
+              ? formatRelativeTimestamp(statusQuery.data.nextWakeAtMs, isChinese)
+              : t("暂无唤醒计划", "No wake scheduled")
+          }
           icon={<CalendarClock size={16} />}
           tone={statusQuery.data?.enabled ? "ok" : "warn"}
         />
         <MetricCard
-          label="Jobs"
-          value={formatCount(statusQuery.data?.jobs ?? allLoadedJobs.length)}
-          subcopy={`${visibleJobs.length.toLocaleString()} visible of ${(jobsQuery.data?.total ?? visibleJobs.length).toLocaleString()} loaded`}
+          label={t("任务", "Jobs")}
+          value={formatCount(statusQuery.data?.jobs ?? allLoadedJobs.length, isChinese)}
+          subcopy={
+            isChinese
+              ? `已显示 ${visibleJobs.length.toLocaleString()} / 已加载 ${(jobsQuery.data?.total ?? visibleJobs.length).toLocaleString()}`
+              : `${visibleJobs.length.toLocaleString()} visible of ${(jobsQuery.data?.total ?? visibleJobs.length).toLocaleString()} loaded`
+          }
           icon={<Filter size={16} />}
         />
         <MetricCard
-          label="Failures"
+          label={t("失败", "Failures")}
           value={unhealthyJobs.length.toLocaleString()}
-          subcopy={unhealthyJobs.length > 0 ? `${unhealthyJobs[0].name} needs attention` : "No recent failing jobs"}
+          subcopy={
+            unhealthyJobs.length > 0
+              ? isChinese
+                ? `${unhealthyJobs[0].name} 需要处理`
+                : `${unhealthyJobs[0].name} needs attention`
+              : t("最近没有失败任务", "No recent failing jobs")
+          }
           icon={<AlertTriangle size={16} />}
           tone={unhealthyJobs.length > 0 ? "danger" : "ok"}
         />
         <MetricCard
-          label="Runs"
+          label={t("运行", "Runs")}
           value={(runsQuery.data?.total ?? runs.length).toLocaleString()}
-          subcopy={runsScope === "all" ? "Across all jobs" : selectedJob ? `For ${selectedJob.name}` : "Select a job"}
+          subcopy={
+            runsScope === "all"
+              ? t("覆盖全部任务", "Across all jobs")
+              : selectedJob
+                ? isChinese
+                  ? `${selectedJob.name} 的运行记录`
+                  : `For ${selectedJob.name}`
+                : t("请选择一个任务", "Select a job")
+          }
           icon={<Clock3 size={16} />}
         />
       </section>
@@ -1492,17 +1583,23 @@ export function CronPage() {
           <Card className="cron-card cron-section-card">
             <div className="cron-card__header">
               <div>
-                <h3>Jobs</h3>
-                <p>Manage schedules, inspect state quickly, and keep the list easy to scan.</p>
+                <h3>{t("任务", "Jobs")}</h3>
+                <p>{t("集中管理计划并快速查看状态，让列表更容易扫读。", "Manage schedules, inspect state quickly, and keep the list easy to scan.")}</p>
               </div>
               <div className="cron-card__header-actions">
                 <span className="cron-pill cron-pill--soft">
-                  {visibleJobs.length.toLocaleString()} of {(jobsQuery.data?.total ?? visibleJobs.length).toLocaleString()} shown
+                  {isChinese
+                    ? `已显示 ${visibleJobs.length.toLocaleString()} / ${(jobsQuery.data?.total ?? visibleJobs.length).toLocaleString()}`
+                    : `${visibleJobs.length.toLocaleString()} of ${(jobsQuery.data?.total ?? visibleJobs.length).toLocaleString()} shown`}
                 </span>
-                {jobsActiveFilters && <span className="cron-pill cron-pill--warn">{jobsActiveFilterCount} active</span>}
+                {jobsActiveFilters && (
+                  <span className="cron-pill cron-pill--warn">
+                    {isChinese ? `${jobsActiveFilterCount} 个生效中` : `${jobsActiveFilterCount} active`}
+                  </span>
+                )}
                 {jobsActiveFilters && (
                   <Button variant="secondary" size="sm" onClick={resetJobFilters}>
-                    Reset Filters
+                    {t("重置筛选", "Reset Filters")}
                   </Button>
                 )}
               </div>
@@ -1510,74 +1607,78 @@ export function CronPage() {
 
             <div className="cron-filters-grid cron-filters-grid--jobs cron-filter-surface">
               <label className="cron-field cron-field--search">
-                <span>Search jobs</span>
+                <span>{t("搜索任务", "Search jobs")}</span>
                 <div className="cron-search-field">
                   <Search size={14} />
                   <input
                     value={jobSearch}
                     onChange={(event) => setJobSearch(event.target.value)}
-                    placeholder="Search name, description, agent, session key"
+                    placeholder={t("搜索名称、描述、智能体、会话 Key", "Search name, description, agent, session key")}
                   />
                 </div>
               </label>
               <label className="cron-field">
-                <span>Enabled</span>
+                <span>{t("启用状态", "Enabled")}</span>
                 <select value={jobsEnabledFilter} onChange={(event) => setJobsEnabledFilter(event.target.value as CronJobsEnabledFilter)}>
-                  <option value="all">All</option>
-                  <option value="enabled">Enabled</option>
-                  <option value="disabled">Disabled</option>
+                  <option value="all">{t("全部", "All")}</option>
+                  <option value="enabled">{t("已启用", "Enabled")}</option>
+                  <option value="disabled">{t("已停用", "Disabled")}</option>
                 </select>
               </label>
               <label className="cron-field">
-                <span>Schedule</span>
+                <span>{t("计划", "Schedule")}</span>
                 <select
                   value={jobsScheduleKindFilter}
                   onChange={(event) => setJobsScheduleKindFilter(event.target.value as CronJobScheduleKindFilter)}
                 >
-                  <option value="all">All</option>
-                  <option value="every">Every</option>
-                  <option value="at">One-shot</option>
+                  <option value="all">{t("全部", "All")}</option>
+                  <option value="every">{t("间隔", "Every")}</option>
+                  <option value="at">{t("单次", "One-shot")}</option>
                   <option value="cron">Cron</option>
                 </select>
               </label>
               <label className="cron-field">
-                <span>Last status</span>
+                <span>{t("最近状态", "Last status")}</span>
                 <select
                   value={jobsLastStatusFilter}
                   onChange={(event) => setJobsLastStatusFilter(event.target.value as CronJobLastStatusFilter)}
                 >
-                  <option value="all">All</option>
-                  <option value="ok">Succeeded</option>
-                  <option value="error">Failed</option>
-                  <option value="skipped">Skipped</option>
+                  <option value="all">{t("全部", "All")}</option>
+                  <option value="ok">{formatRunStatusLabel("ok", isChinese)}</option>
+                  <option value="error">{formatRunStatusLabel("error", isChinese)}</option>
+                  <option value="skipped">{formatRunStatusLabel("skipped", isChinese)}</option>
                 </select>
               </label>
               <label className="cron-field">
-                <span>Sort</span>
+                <span>{t("排序", "Sort")}</span>
                 <select value={jobsSortBy} onChange={(event) => setJobsSortBy(event.target.value as CronJobsSortBy)}>
-                  <option value="nextRunAtMs">Next run</option>
-                  <option value="updatedAtMs">Recently updated</option>
-                  <option value="name">Name</option>
+                  <option value="nextRunAtMs">{t("下次运行", "Next run")}</option>
+                  <option value="updatedAtMs">{t("最近更新", "Recently updated")}</option>
+                  <option value="name">{t("名称", "Name")}</option>
                 </select>
               </label>
               <label className="cron-field">
-                <span>Direction</span>
+                <span>{t("方向", "Direction")}</span>
                 <select value={jobsSortDir} onChange={(event) => setJobsSortDir(event.target.value as CronSortDir)}>
-                  <option value="asc">Ascending</option>
-                  <option value="desc">Descending</option>
+                  <option value="asc">{t("升序", "Ascending")}</option>
+                  <option value="desc">{t("降序", "Descending")}</option>
                 </select>
               </label>
             </div>
 
             {jobsActiveFilters && (
               <div className="cron-active-filters">
-                <span className="cron-active-filters__label">Active filters</span>
-                {jobSearch.trim() && <span className="cron-pill cron-pill--soft">Search: {jobSearch.trim()}</span>}
-                {jobsEnabledFilter !== "all" && <span className="cron-pill cron-pill--soft">State: {jobsEnabledFilter}</span>}
-                {jobsScheduleKindFilter !== "all" && <span className="cron-pill cron-pill--soft">Schedule: {formatScheduleKindLabel(jobsScheduleKindFilter)}</span>}
-                {jobsLastStatusFilter !== "all" && <span className="cron-pill cron-pill--soft">Last status: {formatRunStatusLabel(jobsLastStatusFilter)}</span>}
+                <span className="cron-active-filters__label">{t("当前筛选", "Active filters")}</span>
+                {jobSearch.trim() && <span className="cron-pill cron-pill--soft">{t("搜索", "Search")}: {jobSearch.trim()}</span>}
+                {jobsEnabledFilter !== "all" && (
+                  <span className="cron-pill cron-pill--soft">
+                    {t("状态", "State")}: {jobsEnabledFilter === "enabled" ? t("已启用", "Enabled") : t("已停用", "Disabled")}
+                  </span>
+                )}
+                {jobsScheduleKindFilter !== "all" && <span className="cron-pill cron-pill--soft">{t("计划", "Schedule")}: {formatScheduleKindLabel(jobsScheduleKindFilter, isChinese)}</span>}
+                {jobsLastStatusFilter !== "all" && <span className="cron-pill cron-pill--soft">{t("最近状态", "Last status")}: {formatRunStatusLabel(jobsLastStatusFilter, isChinese)}</span>}
                 {(jobsSortBy !== "nextRunAtMs" || jobsSortDir !== "asc") && (
-                  <span className="cron-pill cron-pill--soft">Sort: {formatJobsSortLabel(jobsSortBy, jobsSortDir)}</span>
+                  <span className="cron-pill cron-pill--soft">{t("排序", "Sort")}: {formatJobsSortLabel(jobsSortBy, jobsSortDir, isChinese)}</span>
                 )}
               </div>
             )}
@@ -1585,15 +1686,15 @@ export function CronPage() {
             {jobsQuery.isLoading ? (
               <EmptyState
                 icon={<RefreshCw size={18} />}
-                title="Loading jobs"
-                body="Pulling the current scheduler catalog from the gateway."
+                title={t("正在加载任务", "Loading jobs")}
+                body={t("正在从网关拉取当前调度任务目录。", "Pulling the current scheduler catalog from the gateway.")}
                 tone="loading"
               />
             ) : visibleJobs.length === 0 ? (
               <EmptyState
                 icon={<Search size={18} />}
-                title="No jobs found"
-                body="Adjust the filters above or create a new job from the form panel."
+                title={t("没有找到任务", "No jobs found")}
+                body={t("调整上方筛选条件，或在右侧表单中创建新任务。", "Adjust the filters above or create a new job from the form panel.")}
               />
             ) : (
               <div className="cron-job-list">
@@ -1625,54 +1726,60 @@ export function CronPage() {
                           <div>
                             <div className="cron-job-row__title">{job.name}</div>
                             <div className="cron-job-row__subcopy">
-                              {job.description?.trim() || describePayload(job.payload)}
+                              {job.description?.trim() || describePayload(job.payload, isChinese)}
                             </div>
                           </div>
                           <div className="cron-job-row__badges">
                             <StatusBadge
                               status={job.state.runningAtMs ? "running" : job.enabled ? "connected" : "disconnected"}
-                              label={job.state.runningAtMs ? "Running" : job.enabled ? "Enabled" : "Disabled"}
+                              label={job.state.runningAtMs ? t("运行中", "Running") : job.enabled ? t("已启用", "Enabled") : t("已停用", "Disabled")}
                             />
                             {(job.state.consecutiveErrors ?? 0) > 0 && (
                               <span className="cron-pill cron-pill--danger">
-                                {(job.state.consecutiveErrors ?? 0).toLocaleString()} consecutive errors
+                                {isChinese
+                                  ? `连续错误 ${(job.state.consecutiveErrors ?? 0).toLocaleString()} 次`
+                                  : `${(job.state.consecutiveErrors ?? 0).toLocaleString()} consecutive errors`}
                               </span>
                             )}
                           </div>
                         </div>
 
                         <div className="cron-pill-row">
-                          <span className="cron-pill cron-pill--soft">{formatScheduleKindLabel(job.schedule.kind)}</span>
-                          <span className="cron-pill cron-pill--soft">{formatPayloadKindLabel(job.payload.kind)}</span>
-                          <span className="cron-pill cron-pill--soft">{formatSessionTargetLabel(job.sessionTarget)}</span>
-                          <span className="cron-pill cron-pill--soft">{formatWakeModeLabel(job.wakeMode)}</span>
-                          <span className="cron-pill cron-pill--soft">{describeDelivery(job)}</span>
+                          <span className="cron-pill cron-pill--soft">{formatScheduleKindLabel(job.schedule.kind, isChinese)}</span>
+                          <span className="cron-pill cron-pill--soft">{formatPayloadKindLabel(job.payload.kind, isChinese)}</span>
+                          <span className="cron-pill cron-pill--soft">{formatSessionTargetLabel(job.sessionTarget, isChinese)}</span>
+                          <span className="cron-pill cron-pill--soft">{formatWakeModeLabel(job.wakeMode, isChinese)}</span>
+                          <span className="cron-pill cron-pill--soft">{describeDelivery(job, isChinese)}</span>
                           {job.failureAlert !== undefined && (
-                            <span className="cron-pill cron-pill--warn">{describeFailureAlert(job)}</span>
+                            <span className="cron-pill cron-pill--warn">{describeFailureAlert(job, isChinese)}</span>
                           )}
                         </div>
 
                         <div className="cron-kv-grid">
                           <div className="cron-kv-card">
-                            <span>Schedule</span>
-                            <strong>{formatScheduleKindLabel(job.schedule.kind)}</strong>
-                            <small className="cron-kv-card__meta">{describeSchedule(job.schedule)}</small>
+                            <span>{t("计划", "Schedule")}</span>
+                            <strong>{formatScheduleKindLabel(job.schedule.kind, isChinese)}</strong>
+                            <small className="cron-kv-card__meta">{describeSchedule(job.schedule, isChinese)}</small>
                           </div>
                           <div className="cron-kv-card">
-                            <span>Next run</span>
-                            <strong title={formatDateTime(job.state.nextRunAtMs)}>{formatRelativeTimestamp(job.state.nextRunAtMs)}</strong>
+                            <span>{t("下次运行", "Next run")}</span>
+                            <strong title={formatDateTime(job.state.nextRunAtMs)}>{formatRelativeTimestamp(job.state.nextRunAtMs, isChinese)}</strong>
                             <small className="cron-kv-card__meta">{formatDateTime(job.state.nextRunAtMs)}</small>
                           </div>
                           <div className="cron-kv-card">
-                            <span>Last status</span>
-                            <strong>{formatRunStatusLabel(lastStatus)}</strong>
+                            <span>{t("最近状态", "Last status")}</span>
+                            <strong>{formatRunStatusLabel(lastStatus, isChinese)}</strong>
                             <small className="cron-kv-card__meta">
-                              {job.state.lastRunAtMs ? `Last run ${formatRelativeTimestamp(job.state.lastRunAtMs)}` : "No runs recorded yet"}
+                              {job.state.lastRunAtMs
+                                ? isChinese
+                                  ? `上次运行 ${formatRelativeTimestamp(job.state.lastRunAtMs, isChinese)}`
+                                  : `Last run ${formatRelativeTimestamp(job.state.lastRunAtMs, isChinese)}`
+                                : t("暂无运行记录", "No runs recorded yet")}
                             </small>
                           </div>
                           <div className="cron-kv-card">
-                            <span>Updated</span>
-                            <strong>{formatRelativeTimestamp(job.updatedAtMs)}</strong>
+                            <span>{t("更新时间", "Updated")}</span>
+                            <strong>{formatRelativeTimestamp(job.updatedAtMs, isChinese)}</strong>
                             <small className="cron-kv-card__meta">{formatDateTime(job.updatedAtMs)}</small>
                           </div>
                         </div>
@@ -1684,11 +1791,11 @@ export function CronPage() {
 
                       <div className="cron-job-row__actions">
                         <Button variant="secondary" size="sm" onClick={() => startEditing(job)}>
-                          Edit
+                          {t("编辑", "Edit")}
                         </Button>
                         <Button variant="secondary" size="sm" onClick={() => startCloning(job)}>
                           <CopyPlus size={12} />
-                          Clone
+                          {t("克隆", "Clone")}
                         </Button>
                         <Button
                           variant="secondary"
@@ -1696,7 +1803,7 @@ export function CronPage() {
                           onClick={() => actionMutation.mutate({ type: "toggle", job, enabled: !job.enabled })}
                           loading={isActionPending && activeJobAction?.type === "toggle"}
                         >
-                          {job.enabled ? "Disable" : "Enable"}
+                          {job.enabled ? t("停用", "Disable") : t("启用", "Enable")}
                         </Button>
                         <Button
                           size="sm"
@@ -1704,20 +1811,20 @@ export function CronPage() {
                           loading={isActionPending && activeJobAction?.type === "run" && activeJobAction.mode === "force"}
                         >
                           <Play size={12} />
-                          Run Now
+                          {t("立即运行", "Run Now")}
                         </Button>
                         <Button
                           variant="danger"
                           size="sm"
                           onClick={() => {
-                            if (window.confirm(`Delete cron job \"${job.name}\"?`)) {
+                            if (window.confirm(isChinese ? `确认删除定时任务“${job.name}”吗？` : `Delete cron job \"${job.name}\"?`)) {
                               actionMutation.mutate({ type: "delete", job });
                             }
                           }}
                           loading={isActionPending && activeJobAction?.type === "delete"}
                         >
                           <Trash2 size={12} />
-                          Delete
+                          {t("删除", "Delete")}
                         </Button>
                       </div>
                     </div>
@@ -1729,7 +1836,7 @@ export function CronPage() {
             {jobsQuery.data?.hasMore && (
               <div className="cron-load-more">
                 <Button variant="secondary" onClick={() => setJobsLimit((current) => current + DEFAULT_PAGE_SIZE)}>
-                  Load More Jobs
+                  {t("加载更多任务", "Load More Jobs")}
                 </Button>
               </div>
             )}
@@ -1740,69 +1847,71 @@ export function CronPage() {
               <div className="cron-card__header">
                 <div>
                   <h3>{selectedJob.name}</h3>
-                  <p>{selectedJob.description?.trim() || describePayload(selectedJob.payload)}</p>
+                  <p>{selectedJob.description?.trim() || describePayload(selectedJob.payload, isChinese)}</p>
                 </div>
                 <div className="cron-card__header-actions">
                   <Button variant="secondary" size="sm" onClick={() => startEditing(selectedJob)}>
-                    Edit
+                    {t("编辑", "Edit")}
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => startCloning(selectedJob)}>
-                    Clone
+                    {t("克隆", "Clone")}
                   </Button>
                   <Button size="sm" onClick={() => actionMutation.mutate({ type: "run", job: selectedJob, mode: "due" })}>
                     <Play size={12} />
-                    Run Due
+                    {t("运行到期任务", "Run Due")}
                   </Button>
                 </div>
               </div>
 
               <div className="cron-pill-row cron-pill-row--header">
                 <span className={cx("cron-pill", selectedJob.enabled ? "cron-pill--ok" : "cron-pill--soft")}>
-                  {selectedJob.enabled ? "Enabled" : "Disabled"}
+                  {selectedJob.enabled ? t("已启用", "Enabled") : t("已停用", "Disabled")}
                 </span>
-                <span className="cron-pill cron-pill--soft">{formatScheduleKindLabel(selectedJob.schedule.kind)}</span>
-                <span className="cron-pill cron-pill--soft">{formatPayloadKindLabel(selectedJob.payload.kind)}</span>
-                <span className="cron-pill cron-pill--soft">{formatSessionTargetLabel(selectedJob.sessionTarget)}</span>
-                <span className="cron-pill cron-pill--soft">{formatWakeModeLabel(selectedJob.wakeMode)}</span>
+                <span className="cron-pill cron-pill--soft">{formatScheduleKindLabel(selectedJob.schedule.kind, isChinese)}</span>
+                <span className="cron-pill cron-pill--soft">{formatPayloadKindLabel(selectedJob.payload.kind, isChinese)}</span>
+                <span className="cron-pill cron-pill--soft">{formatSessionTargetLabel(selectedJob.sessionTarget, isChinese)}</span>
+                <span className="cron-pill cron-pill--soft">{formatWakeModeLabel(selectedJob.wakeMode, isChinese)}</span>
               </div>
 
               {(selectedJob.state.consecutiveErrors ?? 0) > 0 && (
                 <div className="cron-inline-alert cron-inline-alert--error compact">
                   <AlertTriangle size={16} />
                   <span>
-                    {selectedJob.state.consecutiveErrors} consecutive failures. Last alert {formatDateTime(selectedJob.state.lastFailureAlertAtMs)}.
+                    {isChinese
+                      ? `已连续失败 ${selectedJob.state.consecutiveErrors} 次。上次告警时间：${formatDateTime(selectedJob.state.lastFailureAlertAtMs)}。`
+                      : `${selectedJob.state.consecutiveErrors} consecutive failures. Last alert ${formatDateTime(selectedJob.state.lastFailureAlertAtMs)}.`}
                   </span>
                 </div>
               )}
 
               <div className="cron-spotlight-grid">
                 <div className="cron-panel-card">
-                  <h4>Execution</h4>
+                  <h4>{t("执行", "Execution")}</h4>
                   <div className="cron-kv-list">
-                    <div className="cron-kv-row"><span>Schedule</span><strong>{describeSchedule(selectedJob.schedule)}</strong></div>
-                    <div className="cron-kv-row"><span>Target</span><strong>{selectedJob.sessionTarget}</strong></div>
-                    <div className="cron-kv-row"><span>Wake mode</span><strong>{selectedJob.wakeMode}</strong></div>
-                    <div className="cron-kv-row"><span>Session key</span><strong>{selectedJob.sessionKey || "n/a"}</strong></div>
-                    <div className="cron-kv-row"><span>Agent</span><strong>{selectedJob.agentId || "inherit"}</strong></div>
+                    <div className="cron-kv-row"><span>{t("计划", "Schedule")}</span><strong>{describeSchedule(selectedJob.schedule, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("目标", "Target")}</span><strong>{formatSessionTargetLabel(selectedJob.sessionTarget, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("唤醒模式", "Wake mode")}</span><strong>{formatWakeModeLabel(selectedJob.wakeMode, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("会话 Key", "Session key")}</span><strong>{selectedJob.sessionKey || t("暂无", "n/a")}</strong></div>
+                    <div className="cron-kv-row"><span>{t("智能体", "Agent")}</span><strong>{selectedJob.agentId || t("继承默认值", "inherit")}</strong></div>
                   </div>
                 </div>
                 <div className="cron-panel-card">
-                  <h4>Health</h4>
+                  <h4>{t("健康状态", "Health")}</h4>
                   <div className="cron-kv-list">
-                    <div className="cron-kv-row"><span>Next run</span><strong>{formatDateTimeWithRelative(selectedJob.state.nextRunAtMs)}</strong></div>
-                    <div className="cron-kv-row"><span>Last run</span><strong>{formatDateTimeWithRelative(selectedJob.state.lastRunAtMs)}</strong></div>
-                    <div className="cron-kv-row"><span>Last status</span><strong>{formatRunStatusLabel(getJobLastStatus(selectedJob))}</strong></div>
-                    <div className="cron-kv-row"><span>Last duration</span><strong>{formatDuration(selectedJob.state.lastDurationMs)}</strong></div>
-                    <div className="cron-kv-row"><span>Consecutive errors</span><strong>{formatCount(selectedJob.state.consecutiveErrors ?? 0)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("下次运行", "Next run")}</span><strong>{formatDateTimeWithRelative(selectedJob.state.nextRunAtMs, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("上次运行", "Last run")}</span><strong>{formatDateTimeWithRelative(selectedJob.state.lastRunAtMs, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("最近状态", "Last status")}</span><strong>{formatRunStatusLabel(getJobLastStatus(selectedJob), isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("最近耗时", "Last duration")}</span><strong>{formatDuration(selectedJob.state.lastDurationMs, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("连续错误", "Consecutive errors")}</span><strong>{formatCount(selectedJob.state.consecutiveErrors ?? 0, isChinese)}</strong></div>
                   </div>
                 </div>
                 <div className="cron-panel-card">
-                  <h4>Delivery</h4>
+                  <h4>{t("投递", "Delivery")}</h4>
                   <div className="cron-kv-list">
-                    <div className="cron-kv-row"><span>Primary delivery</span><strong>{describeDelivery(selectedJob)}</strong></div>
-                    <div className="cron-kv-row"><span>Last delivery</span><strong>{formatDeliveryStatusLabel(selectedJob.state.lastDeliveryStatus)}</strong></div>
-                    <div className="cron-kv-row"><span>Failure alerts</span><strong>{describeFailureAlert(selectedJob)}</strong></div>
-                    <div className="cron-kv-row"><span>Updated</span><strong>{formatDateTime(selectedJob.updatedAtMs)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("主投递方式", "Primary delivery")}</span><strong>{describeDelivery(selectedJob, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("最近投递", "Last delivery")}</span><strong>{formatDeliveryStatusLabel(selectedJob.state.lastDeliveryStatus, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("失败告警", "Failure alerts")}</span><strong>{describeFailureAlert(selectedJob, isChinese)}</strong></div>
+                    <div className="cron-kv-row"><span>{t("更新时间", "Updated")}</span><strong>{formatDateTime(selectedJob.updatedAtMs)}</strong></div>
                   </div>
                 </div>
               </div>
@@ -1811,13 +1920,13 @@ export function CronPage() {
                 <div className="cron-error-columns">
                   {selectedJob.state.lastError && (
                     <div className="cron-panel-card">
-                      <h4>Last execution error</h4>
+                      <h4>{t("最近执行错误", "Last execution error")}</h4>
                       <div className="cron-error-box">{selectedJob.state.lastError}</div>
                     </div>
                   )}
                   {selectedJob.state.lastDeliveryError && (
                     <div className="cron-panel-card">
-                      <h4>Last delivery error</h4>
+                      <h4>{t("最近投递错误", "Last delivery error")}</h4>
                       <div className="cron-error-box">{selectedJob.state.lastDeliveryError}</div>
                     </div>
                   )}
@@ -1829,17 +1938,17 @@ export function CronPage() {
           <Card className="cron-card cron-section-card">
             <div className="cron-card__header">
               <div>
-                <h3>Runs</h3>
-                <p>Scan recent executions first, then inspect the selected run in a calmer detail pane.</p>
+                <h3>{t("运行记录", "Runs")}</h3>
+                <p>{t("先扫一遍最近执行记录，再在右侧查看更安静的详情面板。", "Scan recent executions first, then inspect the selected run in a calmer detail pane.")}</p>
               </div>
               <div className="cron-card__header-actions">
                 <span className="cron-pill cron-pill--soft">
-                  {runsScope === "all" ? "All jobs" : selectedJob ? selectedJob.name : "Selected job"}
+                  {runsScope === "all" ? t("全部任务", "All jobs") : selectedJob ? selectedJob.name : t("当前任务", "Selected job")}
                 </span>
-                {runsActiveFilters && <span className="cron-pill cron-pill--warn">{runsActiveFilterCount} active</span>}
+                {runsActiveFilters && <span className="cron-pill cron-pill--warn">{isChinese ? `${runsActiveFilterCount} 个生效中` : `${runsActiveFilterCount} active`}</span>}
                 {runsActiveFilters && (
                   <Button variant="secondary" size="sm" onClick={resetRunFilters}>
-                    Reset Filters
+                    {t("重置筛选", "Reset Filters")}
                   </Button>
                 )}
               </div>
@@ -1847,32 +1956,32 @@ export function CronPage() {
 
             <div className="cron-filters-grid cron-filters-grid--runs cron-filter-surface">
               <label className="cron-field">
-                <span>Scope</span>
+                <span>{t("范围", "Scope")}</span>
                 <select value={runsScope} onChange={(event) => setRunsScope(event.target.value as CronRunScope)}>
-                  <option value="job">Selected job</option>
-                  <option value="all">All jobs</option>
+                  <option value="job">{t("当前任务", "Selected job")}</option>
+                  <option value="all">{t("全部任务", "All jobs")}</option>
                 </select>
               </label>
               <label className="cron-field cron-field--search">
-                <span>Search runs</span>
+                <span>{t("搜索运行记录", "Search runs")}</span>
                 <div className="cron-search-field">
                   <Search size={14} />
                   <input
                     value={runsQueryText}
                     onChange={(event) => setRunsQueryText(event.target.value)}
-                    placeholder="Search summary, error, job name, model"
+                    placeholder={t("搜索摘要、错误、任务名、模型", "Search summary, error, job name, model")}
                   />
                 </div>
               </label>
               <label className="cron-field">
-                <span>Sort</span>
+                <span>{t("排序", "Sort")}</span>
                 <select value={runsSortDir} onChange={(event) => setRunsSortDir(event.target.value as CronSortDir)}>
-                  <option value="desc">Newest first</option>
-                  <option value="asc">Oldest first</option>
+                  <option value="desc">{t("最新优先", "Newest first")}</option>
+                  <option value="asc">{t("最早优先", "Oldest first")}</option>
                 </select>
               </label>
               <div className="cron-filter-group">
-                <span>Status</span>
+                <span>{t("状态", "Status")}</span>
                 <div className="cron-chip-toggle-row">
                   {(["ok", "error", "skipped"] as const).map((status) => (
                     <button
@@ -1881,13 +1990,13 @@ export function CronPage() {
                       className={cx("cron-chip-toggle", runsStatuses.includes(status) && "is-active")}
                       onClick={() => setRunsStatuses((current) => toggleSelection(current, status))}
                     >
-                      {formatRunStatusLabel(status)}
+                      {formatRunStatusLabel(status, isChinese)}
                     </button>
                   ))}
                 </div>
               </div>
               <div className="cron-filter-group">
-                <span>Delivery</span>
+                <span>{t("投递", "Delivery")}</span>
                 <div className="cron-chip-toggle-row">
                   {(["delivered", "not-delivered", "unknown", "not-requested"] as const).map((status) => (
                     <button
@@ -1896,7 +2005,7 @@ export function CronPage() {
                       className={cx("cron-chip-toggle", runsDeliveryStatuses.includes(status) && "is-active")}
                       onClick={() => setRunsDeliveryStatuses((current) => toggleSelection(current, status))}
                     >
-                      {formatDeliveryStatusLabel(status)}
+                      {formatDeliveryStatusLabel(status, isChinese)}
                     </button>
                   ))}
                 </div>
@@ -1905,41 +2014,41 @@ export function CronPage() {
 
             {runsActiveFilters && (
               <div className="cron-active-filters">
-                <span className="cron-active-filters__label">Active filters</span>
-                {runsScope !== "job" && <span className="cron-pill cron-pill--soft">Scope: all jobs</span>}
-                {runsQueryText.trim() && <span className="cron-pill cron-pill--soft">Search: {runsQueryText.trim()}</span>}
-                {runsSortDir !== "desc" && <span className="cron-pill cron-pill--soft">Sort: oldest first</span>}
-                {runsStatuses.length > 0 && <span className="cron-pill cron-pill--soft">Status: {runsStatuses.map((status) => formatRunStatusLabel(status)).join(", ")}</span>}
-                {runsDeliveryStatuses.length > 0 && <span className="cron-pill cron-pill--soft">Delivery: {runsDeliveryStatuses.map((status) => formatDeliveryStatusLabel(status)).join(", ")}</span>}
+                <span className="cron-active-filters__label">{t("当前筛选", "Active filters")}</span>
+                {runsScope !== "job" && <span className="cron-pill cron-pill--soft">{t("范围", "Scope")}: {t("全部任务", "all jobs")}</span>}
+                {runsQueryText.trim() && <span className="cron-pill cron-pill--soft">{t("搜索", "Search")}: {runsQueryText.trim()}</span>}
+                {runsSortDir !== "desc" && <span className="cron-pill cron-pill--soft">{t("排序", "Sort")}: {t("最早优先", "oldest first")}</span>}
+                {runsStatuses.length > 0 && <span className="cron-pill cron-pill--soft">{t("状态", "Status")}: {runsStatuses.map((status) => formatRunStatusLabel(status, isChinese)).join(", ")}</span>}
+                {runsDeliveryStatuses.length > 0 && <span className="cron-pill cron-pill--soft">{t("投递", "Delivery")}: {runsDeliveryStatuses.map((status) => formatDeliveryStatusLabel(status, isChinese)).join(", ")}</span>}
               </div>
             )}
 
             {runsScope === "job" && !selectedJob ? (
               <EmptyState
                 icon={<Clock3 size={18} />}
-                title="Select a job"
-                body="Choose a job row above to load its run history and detail pane."
+                title={t("请选择任务", "Select a job")}
+                body={t("先在上方选择一个任务，才能加载它的运行历史和详情。", "Choose a job row above to load its run history and detail pane.")}
               />
             ) : runsQuery.isLoading ? (
               <EmptyState
                 icon={<RefreshCw size={18} />}
-                title="Loading runs"
-                body="Fetching the latest execution history from the gateway."
+                title={t("正在加载运行记录", "Loading runs")}
+                body={t("正在从网关获取最新执行历史。", "Fetching the latest execution history from the gateway.")}
                 tone="loading"
               />
             ) : runs.length === 0 ? (
               <EmptyState
                 icon={<Search size={18} />}
-                title="No runs found"
-                body="Try a broader search or clear one of the run filters above."
+                title={t("没有找到运行记录", "No runs found")}
+                body={t("可以放宽搜索条件，或清除上方某个筛选项。", "Try a broader search or clear one of the run filters above.")}
               />
             ) : (
               <div className="cron-runs-layout">
                 <div className="cron-runs-list-shell">
                   <div className="cron-subpanel-header">
                     <div>
-                      <h4>Recent runs</h4>
-                      <p>{runs.length.toLocaleString()} loaded in the current view.</p>
+                      <h4>{t("最近运行", "Recent runs")}</h4>
+                      <p>{isChinese ? `当前视图已加载 ${runs.length.toLocaleString()} 条。` : `${runs.length.toLocaleString()} loaded in the current view.`}</p>
                     </div>
                   </div>
                   <div className="cron-runs-list">
@@ -1957,17 +2066,17 @@ export function CronPage() {
                         <div className="cron-run-row__top">
                           <div>
                             <div className="cron-run-row__title">{entry.jobName || entry.jobId}</div>
-                            <div className="cron-run-row__subcopy">{formatDateTime(entry.ts)} · {formatRelativeTimestamp(entry.ts)}</div>
+                            <div className="cron-run-row__subcopy">{formatDateTime(entry.ts)} · {formatRelativeTimestamp(entry.ts, isChinese)}</div>
                           </div>
-                          <span className={cx("cron-pill", `cron-pill--${runTone(status)}`)}>{formatRunStatusLabel(status)}</span>
+                          <span className={cx("cron-pill", `cron-pill--${runTone(status)}`)}>{formatRunStatusLabel(status, isChinese)}</span>
                         </div>
                         <div className="cron-pill-row">
-                          <span className="cron-pill cron-pill--soft">{formatDeliveryStatusLabel(entry.deliveryStatus)}</span>
+                          <span className="cron-pill cron-pill--soft">{formatDeliveryStatusLabel(entry.deliveryStatus, isChinese)}</span>
                           {entry.provider && <span className="cron-pill cron-pill--soft">{entry.provider}</span>}
                           {entry.model && <span className="cron-pill cron-pill--soft">{entry.model}</span>}
-                          {entry.durationMs != null && <span className="cron-pill cron-pill--soft">{formatDuration(entry.durationMs)}</span>}
+                          {entry.durationMs != null && <span className="cron-pill cron-pill--soft">{formatDuration(entry.durationMs, isChinese)}</span>}
                         </div>
-                        <div className="cron-run-row__summary">{entry.error || entry.summary || "No summary recorded."}</div>
+                        <div className="cron-run-row__summary">{entry.error || entry.summary || t("暂无摘要。", "No summary recorded.")}</div>
                       </button>
                     );
                   })}
@@ -1980,13 +2089,13 @@ export function CronPage() {
                       <div className="cron-card__header compact cron-subpanel-header">
                         <div>
                           <h4>{selectedRun.jobName || selectedRun.jobId}</h4>
-                          <p>{formatDateTime(selectedRun.ts)} · {formatRelativeTimestamp(selectedRun.ts)}</p>
+                          <p>{formatDateTime(selectedRun.ts)} · {formatRelativeTimestamp(selectedRun.ts, isChinese)}</p>
                         </div>
                         <div className="cron-card__header-actions">
                           <span className={cx("cron-pill", `cron-pill--${runTone(getRunStatus(selectedRun))}`)}>
-                            {formatRunStatusLabel(getRunStatus(selectedRun))}
+                            {formatRunStatusLabel(getRunStatus(selectedRun), isChinese)}
                           </span>
-                          <span className="cron-pill cron-pill--soft">{formatDeliveryStatusLabel(selectedRun.deliveryStatus)}</span>
+                          <span className="cron-pill cron-pill--soft">{formatDeliveryStatusLabel(selectedRun.deliveryStatus, isChinese)}</span>
                         </div>
                       </div>
 
@@ -1998,27 +2107,27 @@ export function CronPage() {
                       )}
 
                       <div className="cron-kv-grid">
-                        <div className="cron-kv-card"><span>Duration</span><strong>{formatDuration(selectedRun.durationMs)}</strong></div>
-                        <div className="cron-kv-card"><span>Total tokens</span><strong>{formatCount(selectedRun.usage?.total_tokens)}</strong></div>
-                        <div className="cron-kv-card"><span>Run at</span><strong>{formatDateTimeWithRelative(selectedRun.runAtMs)}</strong></div>
-                        <div className="cron-kv-card"><span>Next run</span><strong>{formatDateTimeWithRelative(selectedRun.nextRunAtMs)}</strong></div>
+                        <div className="cron-kv-card"><span>{t("耗时", "Duration")}</span><strong>{formatDuration(selectedRun.durationMs, isChinese)}</strong></div>
+                        <div className="cron-kv-card"><span>{t("总 Token", "Total tokens")}</span><strong>{formatCount(selectedRun.usage?.total_tokens, isChinese)}</strong></div>
+                        <div className="cron-kv-card"><span>{t("运行时间", "Run at")}</span><strong>{formatDateTimeWithRelative(selectedRun.runAtMs, isChinese)}</strong></div>
+                        <div className="cron-kv-card"><span>{t("下次运行", "Next run")}</span><strong>{formatDateTimeWithRelative(selectedRun.nextRunAtMs, isChinese)}</strong></div>
                       </div>
 
                       <div className="cron-panel-card">
-                        <h4>Run details</h4>
+                        <h4>{t("运行详情", "Run details")}</h4>
                         <div className="cron-kv-list">
-                          <div className="cron-kv-row"><span>Delivery</span><strong>{formatDeliveryStatusLabel(selectedRun.deliveryStatus)}</strong></div>
-                          <div className="cron-kv-row"><span>Provider</span><strong>{selectedRun.provider || "n/a"}</strong></div>
-                          <div className="cron-kv-row"><span>Model</span><strong>{selectedRun.model || "n/a"}</strong></div>
-                          <div className="cron-kv-row"><span>Session ID</span><strong>{selectedRun.sessionId || "n/a"}</strong></div>
-                          <div className="cron-kv-row"><span>Session key</span><strong>{selectedRun.sessionKey || "n/a"}</strong></div>
+                          <div className="cron-kv-row"><span>{t("投递", "Delivery")}</span><strong>{formatDeliveryStatusLabel(selectedRun.deliveryStatus, isChinese)}</strong></div>
+                          <div className="cron-kv-row"><span>{t("提供方", "Provider")}</span><strong>{selectedRun.provider || t("暂无", "n/a")}</strong></div>
+                          <div className="cron-kv-row"><span>{t("模型", "Model")}</span><strong>{selectedRun.model || t("暂无", "n/a")}</strong></div>
+                          <div className="cron-kv-row"><span>{t("会话 ID", "Session ID")}</span><strong>{selectedRun.sessionId || t("暂无", "n/a")}</strong></div>
+                          <div className="cron-kv-row"><span>{t("会话 Key", "Session key")}</span><strong>{selectedRun.sessionKey || t("暂无", "n/a")}</strong></div>
                         </div>
                       </div>
 
                       <div className="cron-panel-card">
-                        <h4>Summary</h4>
+                        <h4>{t("摘要", "Summary")}</h4>
                         <div className="cron-run-detail__text">
-                          {selectedRun.summary || selectedRun.error || "No run summary recorded."}
+                          {selectedRun.summary || selectedRun.error || t("暂无运行摘要。", "No run summary recorded.")}
                         </div>
                         {selectedRun.deliveryError && (
                           <div className="cron-error-box">{selectedRun.deliveryError}</div>
@@ -2028,8 +2137,8 @@ export function CronPage() {
                   ) : (
                     <EmptyState
                       icon={<Clock3 size={18} />}
-                      title="Choose a run"
-                      body="Select an execution row to inspect delivery metadata, usage, and summary output."
+                      title={t("请选择运行记录", "Choose a run")}
+                      body={t("选择一条执行记录后，可查看投递元数据、用量和摘要输出。", "Select an execution row to inspect delivery metadata, usage, and summary output.")}
                     />
                   )}
                 </div>
@@ -2039,7 +2148,7 @@ export function CronPage() {
             {runsQuery.data?.hasMore && (
               <div className="cron-load-more">
                 <Button variant="secondary" onClick={() => setRunsLimit((current) => current + DEFAULT_PAGE_SIZE)}>
-                  Load More Runs
+                  {t("加载更多运行记录", "Load More Runs")}
                 </Button>
               </div>
             )}
@@ -2050,13 +2159,13 @@ export function CronPage() {
           <Card className="cron-card cron-form-card">
             <div className="cron-card__header">
               <div>
-                <h3>{editingJobId ? "Edit job" : "New job"}</h3>
-                <p>{editingJobId ? "Adjust timing, payload, or delivery without losing context." : "Create a job with clear sections, tighter labels, and calmer spacing."}</p>
+                <h3>{editingJobId ? t("编辑任务", "Edit job") : t("新建任务", "New job")}</h3>
+                <p>{editingJobId ? t("在不丢失上下文的前提下调整时间、负载和投递设置。", "Adjust timing, payload, or delivery without losing context.") : t("用更清晰的分区、紧凑的标签和更稳定的节奏创建任务。", "Create a job with clear sections, tighter labels, and calmer spacing.")}</p>
               </div>
               {editingJobId && selectedJob && (
                 <StatusBadge
                   status={selectedJob.enabled ? "connected" : "disconnected"}
-                  label={selectedJob.enabled ? "Enabled" : "Disabled"}
+                  label={selectedJob.enabled ? t("已启用", "Enabled") : t("已停用", "Disabled")}
                 />
               )}
             </div>
@@ -2065,7 +2174,9 @@ export function CronPage() {
               <div className="cron-inline-alert compact">
                 <AlertTriangle size={16} />
                 <span>
-                  Fix {blockingFields.length} field{blockingFields.length === 1 ? "" : "s"} before saving.
+                  {isChinese
+                    ? `保存前请先修复 ${blockingFields.length} 个字段。`
+                    : `Fix ${blockingFields.length} field${blockingFields.length === 1 ? "" : "s"} before saving.`}
                 </span>
               </div>
             )}
@@ -2073,53 +2184,53 @@ export function CronPage() {
             <div className="cron-form-sections">
               <div className="cron-form-required">
                 <span className="cron-form-required__dot">*</span>
-                Required values follow the upstream cron validation flow.
+                {t("带 * 的项目遵循官方 cron 校验流程。", "Required values follow the upstream cron validation flow.")}
               </div>
 
               <section className="cron-form-section">
                 <div className="cron-form-section__header">
-                  <h4>Basics</h4>
-                  <p>Name the job and define its ownership and lifecycle.</p>
+                  <h4>{t("基础信息", "Basics")}</h4>
+                  <p>{t("定义任务名称、归属关系和生命周期。", "Name the job and define its ownership and lifecycle.")}</p>
                 </div>
                 <div className="cron-form-grid">
                   <label className="cron-field cron-span-2">
-                    <span>Name</span>
+                    <span>{t("名称", "Name")}</span>
                     <input
                       className={cx(fieldErrors.name && "is-invalid")}
                       value={form.name}
                       onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                      placeholder="Morning digest"
+                      placeholder={t("晨间摘要", "Morning digest")}
                     />
-                    {renderFieldHint("Used in the jobs list, run history, and alerts.")}
+                    {renderFieldHint(t("会显示在任务列表、运行历史和告警里。", "Used in the jobs list, run history, and alerts."))}
                     {renderFieldError(fieldErrors.name)}
                   </label>
                   <label className="cron-field cron-span-2">
-                    <span>Description</span>
+                    <span>{t("描述", "Description")}</span>
                     <input
                       value={form.description}
                       onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                      placeholder="Explain what this job does"
+                      placeholder={t("说明这个任务的作用", "Explain what this job does")}
                     />
-                    {renderFieldHint("Optional short description for operators scanning the page.")}
+                    {renderFieldHint(t("给运维快速扫读用的可选简短描述。", "Optional short description for operators scanning the page."))}
                   </label>
                   <label className="cron-field">
-                    <span>Agent ID</span>
+                    <span>{t("智能体 ID", "Agent ID")}</span>
                     <input
                       value={form.agentId}
                       list="cron-agent-suggestions"
                       onChange={(event) => setForm((current) => ({ ...current, agentId: event.target.value }))}
-                      placeholder="Optional override"
+                      placeholder={t("可选覆盖", "Optional override")}
                     />
-                    {renderFieldHint("Leave blank to inherit the default agent routing.")}
+                    {renderFieldHint(t("留空则继承默认智能体路由。", "Leave blank to inherit the default agent routing."))}
                   </label>
                   <label className="cron-field">
-                    <span>Session key</span>
+                    <span>{t("会话 Key", "Session key")}</span>
                     <input
                       value={form.sessionKey}
                       onChange={(event) => setForm((current) => ({ ...current, sessionKey: event.target.value }))}
-                      placeholder="Optional session pinning"
+                      placeholder={t("可选会话绑定", "Optional session pinning")}
                     />
-                    {renderFieldHint("Pins delivery and wake behavior to a specific session route.")}
+                    {renderFieldHint(t("把投递和唤醒行为固定到特定会话路由。", "Pins delivery and wake behavior to a specific session route."))}
                   </label>
                   <label className="cron-checkbox">
                     <input
@@ -2127,7 +2238,7 @@ export function CronPage() {
                       checked={form.enabled}
                       onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
                     />
-                    <CheckboxCopy label="Enabled" hint="Include this job in scheduler scans and due checks." />
+                    <CheckboxCopy label={t("启用", "Enabled")} hint={t("让调度器在扫描和到期检查时包含这个任务。", "Include this job in scheduler scans and due checks.")} />
                   </label>
                   <label className="cron-checkbox">
                     <input
@@ -2135,68 +2246,68 @@ export function CronPage() {
                       checked={form.deleteAfterRun}
                       onChange={(event) => setForm((current) => ({ ...current, deleteAfterRun: event.target.checked }))}
                     />
-                    <CheckboxCopy label="Delete after run" hint="Remove the job automatically after its next successful execution." />
+                    <CheckboxCopy label={t("运行后删除", "Delete after run")} hint={t("下一次成功执行后自动删除该任务。", "Remove the job automatically after its next successful execution.")} />
                   </label>
                 </div>
               </section>
 
               <section className="cron-form-section">
                 <div className="cron-form-section__header">
-                  <h4>Schedule</h4>
-                  <p>Choose interval, one-shot, or cron-expression timing.</p>
+                  <h4>{t("计划", "Schedule")}</h4>
+                  <p>{t("选择间隔执行、单次执行或 Cron 表达式计划。", "Choose interval, one-shot, or cron-expression timing.")}</p>
                 </div>
                 <div className="cron-form-grid">
                   <label className="cron-field cron-span-2">
-                    <span>Schedule type</span>
+                    <span>{t("计划类型", "Schedule type")}</span>
                     <select
                       value={form.scheduleKind}
                       onChange={(event) => setForm((current) => ({ ...current, scheduleKind: event.target.value as CronFormState["scheduleKind"] }))}
                     >
-                      <option value="every">Every</option>
-                      <option value="at">One-shot at</option>
-                      <option value="cron">Cron expression</option>
+                      <option value="every">{t("间隔执行", "Every")}</option>
+                      <option value="at">{t("单次执行", "One-shot at")}</option>
+                      <option value="cron">{t("Cron 表达式", "Cron expression")}</option>
                     </select>
-                    {renderFieldHint("Choose an interval, a one-shot run, or a cron expression schedule.")}
+                    {renderFieldHint(t("可选间隔计划、单次执行，或 Cron 表达式计划。", "Choose an interval, a one-shot run, or a cron expression schedule."))}
                   </label>
 
                   {form.scheduleKind === "every" && (
                     <>
                       <label className="cron-field">
-                        <span>Repeat every</span>
+                        <span>{t("重复间隔", "Repeat every")}</span>
                         <input
                           className={cx(fieldErrors.everyAmount && "is-invalid")}
                           value={form.everyAmount}
                           onChange={(event) => setForm((current) => ({ ...current, everyAmount: event.target.value }))}
                           placeholder="15"
                         />
-                        {renderFieldHint("Use a positive integer cadence.")}
+                        {renderFieldHint(t("请输入大于 0 的整数频率。", "Use a positive integer cadence."))}
                         {renderFieldError(fieldErrors.everyAmount)}
                       </label>
                       <label className="cron-field">
-                        <span>Unit</span>
+                        <span>{t("单位", "Unit")}</span>
                         <select
                           value={form.everyUnit}
                           onChange={(event) => setForm((current) => ({ ...current, everyUnit: event.target.value as CronFormState["everyUnit"] }))}
                         >
-                          <option value="minutes">Minutes</option>
-                          <option value="hours">Hours</option>
-                          <option value="days">Days</option>
+                          <option value="minutes">{t("分钟", "Minutes")}</option>
+                          <option value="hours">{t("小时", "Hours")}</option>
+                          <option value="days">{t("天", "Days")}</option>
                         </select>
-                        {renderFieldHint("Matches the interval unit used by the gateway scheduler.")}
+                        {renderFieldHint(t("与网关调度器使用的间隔单位保持一致。", "Matches the interval unit used by the gateway scheduler."))}
                       </label>
                     </>
                   )}
 
                   {form.scheduleKind === "at" && (
                     <label className="cron-field cron-span-2">
-                      <span>Run at</span>
+                      <span>{t("执行时间", "Run at")}</span>
                       <input
                         type="datetime-local"
                         className={cx(fieldErrors.scheduleAt && "is-invalid")}
                         value={form.scheduleAt}
                         onChange={(event) => setForm((current) => ({ ...current, scheduleAt: event.target.value }))}
                       />
-                      {renderFieldHint("Use a local date and time for this one-shot job.")}
+                      {renderFieldHint(t("单次任务使用本地日期和时间。", "Use a local date and time for this one-shot job."))}
                       {renderFieldError(fieldErrors.scheduleAt)}
                     </label>
                   )}
@@ -2204,25 +2315,25 @@ export function CronPage() {
                   {form.scheduleKind === "cron" && (
                     <>
                       <label className="cron-field cron-span-2">
-                        <span>Cron expression</span>
+                        <span>{t("Cron 表达式", "Cron expression")}</span>
                         <input
                         className={cx(fieldErrors.cronExpr && "is-invalid")}
                         value={form.cronExpr}
                         onChange={(event) => setForm((current) => ({ ...current, cronExpr: event.target.value }))}
                         placeholder="0 * * * *"
                       />
-                      {renderFieldHint("Five-field cron syntax, with optional timezone below.")}
+                      {renderFieldHint(t("五段 Cron 语法，下方可选配置时区。", "Five-field cron syntax, with optional timezone below."))}
                       {renderFieldError(fieldErrors.cronExpr)}
                     </label>
                       <label className="cron-field">
-                        <span>Timezone</span>
+                        <span>{t("时区", "Timezone")}</span>
                         <input
                           value={form.cronTz}
                           list="cron-timezone-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, cronTz: event.target.value }))}
-                          placeholder="UTC or America/Los_Angeles"
+                          placeholder={t("UTC 或 Asia/Shanghai", "UTC or America/Los_Angeles")}
                         />
-                        {renderFieldHint("Leave blank to use the scheduler default timezone.")}
+                        {renderFieldHint(t("留空则使用调度器默认时区。", "Leave blank to use the scheduler default timezone."))}
                       </label>
                       <label className="cron-checkbox">
                         <input
@@ -2230,31 +2341,31 @@ export function CronPage() {
                           checked={form.scheduleExact}
                           onChange={(event) => setForm((current) => ({ ...current, scheduleExact: event.target.checked }))}
                         />
-                        <CheckboxCopy label="Exact schedule" hint="Disable stagger randomization and run exactly on the cron boundary." />
+                        <CheckboxCopy label={t("精确计划", "Exact schedule")} hint={t("关闭错峰随机化，严格按 Cron 边界执行。", "Disable stagger randomization and run exactly on the cron boundary.")} />
                       </label>
                       <label className="cron-field">
-                        <span>Stagger</span>
+                        <span>{t("错峰", "Stagger")}</span>
                         <input
                           disabled={form.scheduleExact}
                           className={cx(fieldErrors.staggerAmount && "is-invalid")}
                           value={form.staggerAmount}
                           onChange={(event) => setForm((current) => ({ ...current, staggerAmount: event.target.value }))}
-                          placeholder="Optional"
+                          placeholder={t("可选", "Optional")}
                         />
-                        {renderFieldHint("Optional spread window for distributing clustered jobs.")}
+                        {renderFieldHint(t("用于分散密集任务的可选时间窗口。", "Optional spread window for distributing clustered jobs."))}
                         {renderFieldError(fieldErrors.staggerAmount)}
                       </label>
                       <label className="cron-field">
-                        <span>Stagger unit</span>
+                        <span>{t("错峰单位", "Stagger unit")}</span>
                         <select
                           disabled={form.scheduleExact}
                           value={form.staggerUnit}
                           onChange={(event) => setForm((current) => ({ ...current, staggerUnit: event.target.value as CronFormState["staggerUnit"] }))}
                         >
-                          <option value="seconds">Seconds</option>
-                          <option value="minutes">Minutes</option>
+                          <option value="seconds">{t("秒", "Seconds")}</option>
+                          <option value="minutes">{t("分钟", "Minutes")}</option>
                         </select>
-                        {renderFieldHint("Use shorter windows for tight schedules and larger windows for burst control.")}
+                        {renderFieldHint(t("紧凑计划用更短窗口，突发控制用更长窗口。", "Use shorter windows for tight schedules and larger windows for burst control."))}
                       </label>
                     </>
                   )}
@@ -2263,91 +2374,91 @@ export function CronPage() {
 
               <section className="cron-form-section">
                 <div className="cron-form-section__header">
-                  <h4>Execution</h4>
-                  <p>Choose where the job runs and what it sends.</p>
+                  <h4>{t("执行", "Execution")}</h4>
+                  <p>{t("选择任务运行位置以及发送内容。", "Choose where the job runs and what it sends.")}</p>
                 </div>
                 <div className="cron-form-grid">
                   <label className="cron-field">
-                    <span>Session target</span>
+                    <span>{t("会话目标", "Session target")}</span>
                     <select
                       value={form.sessionTarget}
                       onChange={(event) => setForm((current) => ({ ...current, sessionTarget: event.target.value as CronFormState["sessionTarget"] }))}
                     >
-                      <option value="main">Main</option>
-                      <option value="isolated">Isolated</option>
+                      <option value="main">{t("主会话", "Main")}</option>
+                      <option value="isolated">{t("隔离会话", "Isolated")}</option>
                     </select>
-                    {renderFieldHint("Isolated jobs unlock announce delivery and dedicated run context.")}
+                    {renderFieldHint(t("隔离任务可启用广播投递和独立运行上下文。", "Isolated jobs unlock announce delivery and dedicated run context."))}
                   </label>
                   <label className="cron-field">
-                    <span>Wake mode</span>
+                    <span>{t("唤醒模式", "Wake mode")}</span>
                     <select
                       value={form.wakeMode}
                       onChange={(event) => setForm((current) => ({ ...current, wakeMode: event.target.value as CronFormState["wakeMode"] }))}
                     >
-                      <option value="next-heartbeat">Next heartbeat</option>
-                      <option value="now">Now</option>
+                      <option value="next-heartbeat">{t("下次心跳", "Next heartbeat")}</option>
+                      <option value="now">{t("立即", "Now")}</option>
                     </select>
-                    {renderFieldHint("Choose whether the gateway wakes immediately or on the next heartbeat.")}
+                    {renderFieldHint(t("决定网关是立即唤醒还是等到下次心跳。", "Choose whether the gateway wakes immediately or on the next heartbeat."))}
                   </label>
                   <label className="cron-field">
-                    <span>Payload type</span>
+                    <span>{t("负载类型", "Payload type")}</span>
                     <select
                       value={form.payloadKind}
                       onChange={(event) => setForm((current) => ({ ...current, payloadKind: event.target.value as CronFormState["payloadKind"] }))}
                     >
-                      <option value="agentTurn">Agent turn</option>
-                      <option value="systemEvent">System event</option>
+                      <option value="agentTurn">{t("智能体轮次", "Agent turn")}</option>
+                      <option value="systemEvent">{t("系统事件", "System event")}</option>
                     </select>
-                    {renderFieldHint("Agent turns support model, thinking, and delivery controls.")}
+                    {renderFieldHint(t("智能体轮次支持模型、思考预算和投递控制。", "Agent turns support model, thinking, and delivery controls."))}
                   </label>
                   {form.payloadKind === "agentTurn" && (
                     <label className="cron-field">
-                      <span>Timeout seconds</span>
+                      <span>{t("超时秒数", "Timeout seconds")}</span>
                       <input
                         className={cx(fieldErrors.timeoutSeconds && "is-invalid")}
                         value={form.timeoutSeconds}
                         onChange={(event) => setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))}
-                        placeholder="Optional"
+                        placeholder={t("可选", "Optional")}
                       />
-                      {renderFieldHint("Optional hard stop for long-running agent turns.")}
+                      {renderFieldHint(t("给长时间运行的智能体轮次设置硬性停止时间。", "Optional hard stop for long-running agent turns."))}
                       {renderFieldError(fieldErrors.timeoutSeconds)}
                     </label>
                   )}
                   <label className="cron-field cron-span-2">
-                    <span>{form.payloadKind === "agentTurn" ? "Prompt" : "Event text"}</span>
+                    <span>{form.payloadKind === "agentTurn" ? t("提示词", "Prompt") : t("事件文本", "Event text")}</span>
                     <textarea
                       className={cx("cron-textarea", fieldErrors.payloadText && "is-invalid")}
                       value={form.payloadText}
                       onChange={(event) => setForm((current) => ({ ...current, payloadText: event.target.value }))}
                       placeholder={
                         form.payloadKind === "agentTurn"
-                          ? "Summarize overnight activity and draft an update"
-                          : "wake agent pipeline"
+                          ? t("总结夜间活动并起草更新", "Summarize overnight activity and draft an update")
+                          : t("唤醒智能体流水线", "wake agent pipeline")
                       }
                     />
-                    {renderFieldHint(form.payloadKind === "agentTurn" ? "Sent as the turn message for this scheduled run." : "Sent as the raw system event payload.")}
+                    {renderFieldHint(form.payloadKind === "agentTurn" ? t("将作为本次定时运行的轮次消息发送。", "Sent as the turn message for this scheduled run.") : t("将作为原始系统事件负载发送。", "Sent as the raw system event payload."))}
                     {renderFieldError(fieldErrors.payloadText)}
                   </label>
                   {form.payloadKind === "agentTurn" && (
                     <>
                       <label className="cron-field">
-                        <span>Model</span>
+                        <span>{t("模型", "Model")}</span>
                         <input
                           value={form.payloadModel}
                           list="cron-model-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, payloadModel: event.target.value }))}
-                          placeholder="Optional model override"
+                          placeholder={t("可选模型覆盖", "Optional model override")}
                         />
-                        {renderFieldHint("Overrides the default model only for this job.")}
+                        {renderFieldHint(t("仅对当前任务覆盖默认模型。", "Overrides the default model only for this job."))}
                       </label>
                       <label className="cron-field">
-                        <span>Thinking</span>
+                        <span>{t("思考预算", "Thinking")}</span>
                         <input
                           value={form.payloadThinking}
                           onChange={(event) => setForm((current) => ({ ...current, payloadThinking: event.target.value }))}
-                          placeholder="Optional reasoning budget"
+                          placeholder={t("可选思考预算", "Optional reasoning budget")}
                         />
-                        {renderFieldHint("Optional reasoning or thinking budget hint.")}
+                        {renderFieldHint(t("可选推理或思考预算提示。", "Optional reasoning or thinking budget hint."))}
                       </label>
                       <label className="cron-checkbox cron-span-2">
                         <input
@@ -2355,7 +2466,7 @@ export function CronPage() {
                           checked={form.payloadLightContext}
                           onChange={(event) => setForm((current) => ({ ...current, payloadLightContext: event.target.checked }))}
                         />
-                        <CheckboxCopy label="Use light context" hint="Reduce bootstrap context for cheaper, faster routine turns." />
+                        <CheckboxCopy label={t("使用轻量上下文", "Use light context")} hint={t("减少启动上下文，让常规轮次更便宜也更快。", "Reduce bootstrap context for cheaper, faster routine turns.")} />
                       </label>
                     </>
                   )}
@@ -2364,74 +2475,74 @@ export function CronPage() {
 
               <section className="cron-form-section">
                 <div className="cron-form-section__header">
-                  <h4>Delivery</h4>
-                  <p>Send successful output to chat destinations or a webhook.</p>
+                  <h4>{t("投递", "Delivery")}</h4>
+                  <p>{t("把成功输出发到聊天目标或 Webhook。", "Send successful output to chat destinations or a webhook.")}</p>
                 </div>
                 <div className="cron-form-grid">
                   <label className="cron-field">
-                    <span>Delivery mode</span>
+                    <span>{t("投递模式", "Delivery mode")}</span>
                     <select
                       className={cx(fieldErrors.deliveryMode && "is-invalid")}
                       value={form.deliveryMode}
                       onChange={(event) => setForm((current) => ({ ...current, deliveryMode: event.target.value as CronFormState["deliveryMode"] }))}
                     >
-                      <option value="none">None</option>
-                      <option value="announce">Announce</option>
+                      <option value="none">{t("不投递", "None")}</option>
+                      <option value="announce">{t("广播", "Announce")}</option>
                       <option value="webhook">Webhook</option>
                     </select>
-                    {renderFieldHint("Announce matches upstream behavior; webhook posts run output to an external endpoint.")}
+                    {renderFieldHint(t("广播模式对齐官方行为；Webhook 会把运行结果推送到外部地址。", "Announce matches upstream behavior; webhook posts run output to an external endpoint."))}
                     {renderFieldError(fieldErrors.deliveryMode)}
                   </label>
 
                   {form.deliveryMode === "announce" && (
                     <>
                       <label className="cron-field">
-                        <span>Channel</span>
+                        <span>{t("频道", "Channel")}</span>
                         <select
                           value={form.deliveryChannel}
                           onChange={(event) => setForm((current) => ({ ...current, deliveryChannel: event.target.value }))}
                         >
                           {channels.map((channelId) => (
                             <option key={channelId} value={channelId}>
-                              {channelLabelById[channelId] ?? channelId}
+                              {resolveChannelLabel(channelId)}
                             </option>
                           ))}
                         </select>
-                        {renderFieldHint("Use `last` unless this job needs fixed channel routing.")}
+                        {renderFieldHint(t("除非任务需要固定频道路由，否则使用 `last` 即可。", "Use `last` unless this job needs fixed channel routing."))}
                       </label>
                       <label className="cron-field">
-                        <span>Recipient / thread</span>
+                        <span>{t("接收目标 / 线程", "Recipient / thread")}</span>
                         <input
                           value={form.deliveryTo}
                           list="cron-delivery-to-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, deliveryTo: event.target.value }))}
-                          placeholder="Optional override"
+                          placeholder={t("可选覆盖", "Optional override")}
                         />
-                        {renderFieldHint("Optional direct recipient, thread, or channel target override.")}
+                        {renderFieldHint(t("可选地覆盖直接接收者、线程或频道目标。", "Optional direct recipient, thread, or channel target override."))}
                       </label>
                       <label className="cron-field">
-                        <span>Account ID</span>
+                        <span>{t("账号 ID", "Account ID")}</span>
                         <input
                           value={form.deliveryAccountId}
                           list="cron-account-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, deliveryAccountId: event.target.value }))}
-                          placeholder="Optional multi-account routing"
+                          placeholder={t("可选多账号路由", "Optional multi-account routing")}
                         />
-                        {renderFieldHint("Needed only when the chosen channel has multiple accounts configured.")}
+                        {renderFieldHint(t("仅当选定频道配置了多个账号时才需要。", "Needed only when the chosen channel has multiple accounts configured."))}
                       </label>
                     </>
                   )}
 
                   {form.deliveryMode === "webhook" && (
                     <label className="cron-field cron-span-2">
-                      <span>Webhook URL</span>
+                      <span>{t("Webhook 地址", "Webhook URL")}</span>
                       <input
                         className={cx(fieldErrors.deliveryTo && "is-invalid")}
                         value={form.deliveryTo}
                         onChange={(event) => setForm((current) => ({ ...current, deliveryTo: event.target.value }))}
                         placeholder="https://example.com/hook"
                       />
-                      {renderFieldHint("The gateway posts successful run output to this URL.")}
+                      {renderFieldHint(t("网关会把成功运行的输出 POST 到这个地址。", "The gateway posts successful run output to this URL."))}
                       {renderFieldError(fieldErrors.deliveryTo)}
                     </label>
                   )}
@@ -2443,7 +2554,7 @@ export function CronPage() {
                         checked={form.deliveryBestEffort}
                         onChange={(event) => setForm((current) => ({ ...current, deliveryBestEffort: event.target.checked }))}
                       />
-                      <CheckboxCopy label="Best effort delivery" hint="Do not fail the job when the delivery step cannot complete." />
+                      <CheckboxCopy label={t("尽力投递", "Best effort delivery")} hint={t("即使投递步骤失败，也不要让整个任务失败。", "Do not fail the job when the delivery step cannot complete.")} />
                     </label>
                   )}
                 </div>
@@ -2451,98 +2562,98 @@ export function CronPage() {
                 {!supportsAnnounce && form.deliveryMode === "announce" && (
                   <div className="cron-inline-alert compact">
                     <AlertTriangle size={16} />
-                    <span>Announce delivery only applies to isolated agent-turn jobs.</span>
+                    <span>{t("广播投递仅适用于隔离会话的智能体轮次任务。", "Announce delivery only applies to isolated agent-turn jobs.")}</span>
                   </div>
                 )}
               </section>
 
               <section className="cron-form-section">
                 <div className="cron-form-section__header">
-                  <h4>Failure alerts</h4>
-                  <p>Send repeated-failure alerts when a job needs attention.</p>
+                  <h4>{t("失败告警", "Failure alerts")}</h4>
+                  <p>{t("当任务需要关注时，发送重复失败告警。", "Send repeated-failure alerts when a job needs attention.")}</p>
                 </div>
                 <div className="cron-form-grid">
                   <label className="cron-field cron-span-2">
-                    <span>Failure alert mode</span>
+                    <span>{t("失败告警模式", "Failure alert mode")}</span>
                     <select
                       value={form.failureAlertMode}
                       onChange={(event) => setForm((current) => ({ ...current, failureAlertMode: event.target.value as CronFormState["failureAlertMode"] }))}
                     >
-                      <option value="inherit">Inherit gateway defaults</option>
-                      <option value="disabled">Disabled</option>
-                      <option value="custom">Custom</option>
+                      <option value="inherit">{t("继承网关默认值", "Inherit gateway defaults")}</option>
+                      <option value="disabled">{t("关闭", "Disabled")}</option>
+                      <option value="custom">{t("自定义", "Custom")}</option>
                     </select>
-                    {renderFieldHint("Custom alerts override the gateway default repeated-failure behavior.")}
+                    {renderFieldHint(t("自定义告警会覆盖网关默认的重复失败行为。", "Custom alerts override the gateway default repeated-failure behavior."))}
                   </label>
 
                   {form.failureAlertMode === "custom" && (
                     <>
                       <label className="cron-field">
-                        <span>Alert after</span>
+                        <span>{t("告警阈值", "Alert after")}</span>
                         <input
                           className={cx(fieldErrors.failureAlertAfter && "is-invalid")}
                           value={form.failureAlertAfter}
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertAfter: event.target.value }))}
                           placeholder="3"
                         />
-                        {renderFieldHint("How many consecutive failures occur before the first alert.")}
+                        {renderFieldHint(t("连续失败多少次后触发首次告警。", "How many consecutive failures occur before the first alert."))}
                         {renderFieldError(fieldErrors.failureAlertAfter)}
                       </label>
                       <label className="cron-field">
-                        <span>Cooldown seconds</span>
+                        <span>{t("冷却秒数", "Cooldown seconds")}</span>
                         <input
                           className={cx(fieldErrors.failureAlertCooldownSeconds && "is-invalid")}
                           value={form.failureAlertCooldownSeconds}
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertCooldownSeconds: event.target.value }))}
                           placeholder="600"
                         />
-                        {renderFieldHint("Minimum quiet period between repeated alerts.")}
+                        {renderFieldHint(t("重复告警之间至少需要安静多久。", "Minimum quiet period between repeated alerts."))}
                         {renderFieldError(fieldErrors.failureAlertCooldownSeconds)}
                       </label>
                       <label className="cron-field">
-                        <span>Alert mode</span>
+                        <span>{t("告警方式", "Alert mode")}</span>
                         <select
                           value={form.failureAlertDeliveryMode}
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertDeliveryMode: event.target.value as CronFormState["failureAlertDeliveryMode"] }))}
                         >
-                          <option value="announce">Announce</option>
+                          <option value="announce">{t("广播", "Announce")}</option>
                           <option value="webhook">Webhook</option>
                         </select>
-                        {renderFieldHint("Choose how repeated-failure notifications are delivered.")}
+                        {renderFieldHint(t("选择重复失败通知的投递方式。", "Choose how repeated-failure notifications are delivered."))}
                       </label>
                       <label className="cron-field">
-                        <span>Alert channel</span>
+                        <span>{t("告警频道", "Alert channel")}</span>
                         <select
                           value={form.failureAlertChannel}
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertChannel: event.target.value }))}
                         >
                           {channels.map((channelId) => (
                             <option key={channelId} value={channelId}>
-                              {channelLabelById[channelId] ?? channelId}
+                              {resolveChannelLabel(channelId)}
                             </option>
                           ))}
                         </select>
-                        {renderFieldHint("Only used for announce-based failure alerts.")}
+                        {renderFieldHint(t("仅在广播型失败告警时使用。", "Only used for announce-based failure alerts."))}
                       </label>
                       <label className="cron-field">
-                        <span>Alert to</span>
+                        <span>{t("告警目标", "Alert to")}</span>
                         <input
                           value={form.failureAlertTo}
                           list="cron-delivery-to-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertTo: event.target.value }))}
-                          placeholder="Optional recipient override"
+                          placeholder={t("可选接收目标覆盖", "Optional recipient override")}
                         />
-                        {renderFieldHint("Optional recipient or thread override for the alert payload.")}
+                        {renderFieldHint(t("可选地为告警负载覆盖接收目标或线程。", "Optional recipient or thread override for the alert payload."))}
                       </label>
                       <label className="cron-field">
-                        <span>Alert account ID</span>
+                        <span>{t("告警账号 ID", "Alert account ID")}</span>
                         <input
                           value={form.failureAlertAccountId}
                           list="cron-account-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertAccountId: event.target.value }))}
-                          placeholder="Optional multi-account routing"
+                          placeholder={t("可选多账号路由", "Optional multi-account routing")}
                         />
-                        {renderFieldHint("Optional multi-account channel routing for announce alerts.")}
+                        {renderFieldHint(t("广播型告警可选的多账号频道路由。", "Optional multi-account channel routing for announce alerts."))}
                       </label>
                     </>
                   )}
@@ -2553,10 +2664,10 @@ export function CronPage() {
             <div className="cron-form-actions">
               <Button onClick={() => saveMutation.mutate()} loading={saveMutation.isPending} disabled={!canSubmit}>
                 <Send size={14} />
-                {editingJobId ? "Save Job" : "Create Job"}
+                {editingJobId ? t("保存任务", "Save Job") : t("创建任务", "Create Job")}
               </Button>
               <Button variant="secondary" onClick={resetForm}>
-                Reset
+                {t("重置", "Reset")}
               </Button>
             </div>
           </Card>
@@ -2564,13 +2675,13 @@ export function CronPage() {
           <Card className="cron-card">
             <div className="cron-card__header">
               <div>
-                <h3>Wake gateway</h3>
-                <p>Trigger the gateway wake path directly for manual nudges and parity checks.</p>
+                <h3>{t("唤醒网关", "Wake gateway")}</h3>
+                <p>{t("直接触发网关唤醒路径，用于人工唤醒和一致性检查。", "Trigger the gateway wake path directly for manual nudges and parity checks.")}</p>
               </div>
             </div>
 
             {wakeMessage && (
-              <div className={cx("cron-inline-alert", wakeMessage.toLowerCase().includes("sent") && "cron-inline-alert--info", "compact")}>
+              <div className={cx("cron-inline-alert", (wakeMessage.toLowerCase().includes("sent") || wakeMessage.includes("已发送")) && "cron-inline-alert--info", "compact")}>
                 <Send size={16} />
                 <span>{wakeMessage}</span>
               </div>
@@ -2578,22 +2689,22 @@ export function CronPage() {
 
             <div className="cron-form-grid">
               <label className="cron-field">
-                <span>Wake mode</span>
+                <span>{t("唤醒模式", "Wake mode")}</span>
                 <select value={wakeMode} onChange={(event) => setWakeMode(event.target.value as "now" | "next-heartbeat")}>
-                  <option value="next-heartbeat">Next heartbeat</option>
-                  <option value="now">Now</option>
+                  <option value="next-heartbeat">{t("下次心跳", "Next heartbeat")}</option>
+                  <option value="now">{t("立即", "Now")}</option>
                 </select>
-                {renderFieldHint("Use the same wake semantics as the scheduler for parity testing.")}
+                {renderFieldHint(t("使用与调度器一致的唤醒语义做一致性测试。", "Use the same wake semantics as the scheduler for parity testing."))}
               </label>
               <label className="cron-field cron-span-2">
-                <span>Wake text</span>
+                <span>{t("唤醒文本", "Wake text")}</span>
                 <textarea
                   className="cron-textarea"
                   value={wakeText}
                   onChange={(event) => setWakeText(event.target.value)}
-                  placeholder="Ask the main session to summarize pending work"
+                  placeholder={t("让主会话总结待处理工作", "Ask the main session to summarize pending work")}
                 />
-                {renderFieldHint("Optional payload sent with the wake request.")}
+                {renderFieldHint(t("唤醒请求可附带的可选负载。", "Optional payload sent with the wake request."))}
               </label>
             </div>
 
@@ -2603,7 +2714,7 @@ export function CronPage() {
                 loading={actionMutation.isPending && actionMutation.variables?.type === "wake"}
               >
                 <Send size={14} />
-                Send Wake
+                {t("发送唤醒", "Send Wake")}
               </Button>
             </div>
           </Card>

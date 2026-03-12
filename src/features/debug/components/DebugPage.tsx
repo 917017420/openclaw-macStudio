@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, Bug, Database, RefreshCw, TerminalSquare } from "lucide-react";
 import { Button, Card } from "@/components/ui";
 import { useConnectionStore } from "@/features/connection/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -44,6 +45,61 @@ async function loadDebug(): Promise<DebugSnapshot> {
 export function DebugPage() {
   const state = useConnectionStore((store) => store.state);
   const isConnected = state === "connected";
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const copy = isChinese
+    ? {
+        title: "调试",
+        emptySubtitle: "先连接网关，再查看原始快照并发送手动 RPC。",
+        subtitle: "原始快照、模型目录、最近事件，以及手动 RPC 控制台。",
+        refresh: "刷新",
+        snapshots: "快照",
+        snapshotsDetail: "状态、健康、心跳以及可用方法元数据。",
+        manualRpc: "手动 RPC",
+        manualRpcDetail: "使用 JSON 参数发送原始网关方法。",
+        method: "方法",
+        params: "参数（JSON）",
+        runCall: "执行调用",
+        models: "模型",
+        modelsDetail: "来自 `models.list` 的目录。",
+        eventLog: "事件日志",
+        eventLogDetail: "桌面客户端捕获到的最新网关事件。",
+        noEvents: "暂时还没有捕获到事件。",
+        status: "状态",
+        statusDetail: "当前 `status` 响应。",
+        health: "健康",
+        healthDetail: "当前 `health` 响应。",
+        lastHeartbeat: "最近心跳",
+        lastHeartbeatDetail: "原始 `last-heartbeat` 载荷。",
+        waiting: "等待数据",
+        updated: (relative: string) => `更新于${relative}`,
+      }
+    : {
+        title: "Debug",
+        emptySubtitle: "Connect a gateway to inspect raw snapshots and send manual RPCs.",
+        subtitle: "Raw snapshots, model catalog, recent events, and a manual RPC console.",
+        refresh: "Refresh",
+        snapshots: "Snapshots",
+        snapshotsDetail: "Status, health, heartbeat, and available method metadata.",
+        manualRpc: "Manual RPC",
+        manualRpcDetail: "Send a raw gateway method with JSON params.",
+        method: "Method",
+        params: "Params (JSON)",
+        runCall: "Run Call",
+        models: "Models",
+        modelsDetail: "Catalog from `models.list`.",
+        eventLog: "Event Log",
+        eventLogDetail: "Latest gateway events captured by the desktop client.",
+        noEvents: "No events captured yet.",
+        status: "Status",
+        statusDetail: "Current `status` response.",
+        health: "Health",
+        healthDetail: "Current `health` response.",
+        lastHeartbeat: "Last Heartbeat",
+        lastHeartbeatDetail: "Raw `last-heartbeat` payload.",
+        waiting: "Waiting for data",
+        updated: (relative: string) => `Updated ${relative}`,
+      };
   const [callMethod, setCallMethod] = useState("system-presence");
   const [callParams, setCallParams] = useState("{}");
   const [callResult, setCallResult] = useState<string | null>(null);
@@ -82,8 +138,8 @@ export function DebugPage() {
     return (
       <div className="workspace-empty-state">
         <Bug size={40} className="text-text-tertiary" />
-        <h2 className="workspace-title">Debug</h2>
-        <p className="workspace-subtitle">Connect a gateway to inspect raw snapshots and send manual RPCs.</p>
+        <h2 className="workspace-title">{copy.title}</h2>
+        <p className="workspace-subtitle">{copy.emptySubtitle}</p>
       </div>
     );
   }
@@ -92,13 +148,13 @@ export function DebugPage() {
     <div className="workspace-page">
       <div className="workspace-toolbar">
         <div>
-          <h2 className="workspace-title">Debug</h2>
-          <p className="workspace-subtitle">Raw snapshots, model catalog, recent events, and a manual RPC console.</p>
+          <h2 className="workspace-title">{copy.title}</h2>
+          <p className="workspace-subtitle">{copy.subtitle}</p>
         </div>
         <div className="workspace-toolbar__actions">
           <Button variant="secondary" onClick={() => debugQuery.refetch()} loading={debugQuery.isFetching}>
             <RefreshCw size={14} />
-            Refresh
+            {copy.refresh}
           </Button>
         </div>
       </div>
@@ -110,12 +166,12 @@ export function DebugPage() {
       <div className="workspace-grid workspace-grid--wide">
         <Card className="workspace-section">
           <div className="workspace-section__header">
-            <div>
-              <h3>Snapshots</h3>
-              <p>Status, health, heartbeat, and available method metadata.</p>
+          <div>
+              <h3>{copy.snapshots}</h3>
+              <p>{copy.snapshotsDetail}</p>
             </div>
             <span className="workspace-meta">
-              {debugQuery.data ? `Updated ${formatRelativeTime(debugQuery.data.loadedAt)}` : "Waiting for data"}
+              {debugQuery.data ? copy.updated(formatRelativeTime(debugQuery.data.loadedAt)) : copy.waiting}
             </span>
           </div>
 
@@ -130,7 +186,7 @@ export function DebugPage() {
               <div className="workspace-section__header compact">
                 <div>
                   <h4>Status</h4>
-                  <p>Current `status` response.</p>
+                  <p>{copy.statusDetail}</p>
                 </div>
                 <Activity size={16} className="text-text-tertiary" />
               </div>
@@ -139,8 +195,8 @@ export function DebugPage() {
             <div>
               <div className="workspace-section__header compact">
                 <div>
-                  <h4>Health</h4>
-                  <p>Current `health` response.</p>
+                  <h4>{copy.health}</h4>
+                  <p>{copy.healthDetail}</p>
                 </div>
                 <Database size={16} className="text-text-tertiary" />
               </div>
@@ -149,8 +205,8 @@ export function DebugPage() {
             <div>
               <div className="workspace-section__header compact">
                 <div>
-                  <h4>Last Heartbeat</h4>
-                  <p>Raw `last-heartbeat` payload.</p>
+                  <h4>{copy.lastHeartbeat}</h4>
+                  <p>{copy.lastHeartbeatDetail}</p>
                 </div>
                 <RefreshCw size={16} className="text-text-tertiary" />
               </div>
@@ -162,24 +218,24 @@ export function DebugPage() {
         <Card className="workspace-section">
           <div className="workspace-section__header">
             <div>
-              <h3>Manual RPC</h3>
-              <p>Send a raw gateway method with JSON params.</p>
+              <h3>{copy.manualRpc}</h3>
+              <p>{copy.manualRpcDetail}</p>
             </div>
             <TerminalSquare size={16} className="text-text-tertiary" />
           </div>
 
           <label className="session-field">
-            <span>Method</span>
+            <span>{copy.method}</span>
             <input value={callMethod} onChange={(event) => setCallMethod(event.target.value)} placeholder="system-presence" />
           </label>
 
           <label className="session-field">
-            <span>Params (JSON)</span>
+            <span>{copy.params}</span>
             <textarea className="text-area" value={callParams} onChange={(event) => setCallParams(event.target.value)} rows={8} />
           </label>
 
           <div className="workspace-toolbar__actions">
-            <Button onClick={handleCall}>Run Call</Button>
+            <Button onClick={handleCall}>{copy.runCall}</Button>
           </div>
 
           {callError && <div className="workspace-alert workspace-alert--error">{callError}</div>}
@@ -191,8 +247,8 @@ export function DebugPage() {
         <Card className="workspace-section">
           <div className="workspace-section__header">
             <div>
-              <h3>Models</h3>
-              <p>Catalog from `models.list`.</p>
+              <h3>{copy.models}</h3>
+              <p>{copy.modelsDetail}</p>
             </div>
           </div>
           <pre className="code-block">{JSON.stringify(debugQuery.data?.models ?? [], null, 2)}</pre>
@@ -201,13 +257,13 @@ export function DebugPage() {
         <Card className="workspace-section">
           <div className="workspace-section__header">
             <div>
-              <h3>Event Log</h3>
-              <p>Latest gateway events captured by the desktop client.</p>
+              <h3>{copy.eventLog}</h3>
+              <p>{copy.eventLogDetail}</p>
             </div>
           </div>
 
           {gateway.recentEvents.length === 0 ? (
-            <div className="workspace-empty-inline">No events captured yet.</div>
+            <div className="workspace-empty-inline">{copy.noEvents}</div>
           ) : (
             <div className="event-log-list">
               {gateway.recentEvents.slice().reverse().map((event) => (

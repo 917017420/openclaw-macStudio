@@ -28,9 +28,10 @@ import {
   type UsageModelAggregateEntry,
 } from "@/features/usage/components/usage-utils";
 import { useConnectionStore } from "@/features/connection/store";
+import { LANGUAGE_OPTIONS, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 import type { ConnectionState, GatewayConfig } from "@/lib/gateway/types";
-import { cn, formatRelativeTime, truncate } from "@/lib/utils";
+import { cn, truncate } from "@/lib/utils";
 import {
   asRecord,
   loadOverview,
@@ -41,12 +42,12 @@ import {
   type OverviewData,
   type OverviewSessionItem,
 } from "./overview-data";
+import { getOverviewCopy, type OverviewCopy } from "./overview-copy";
 import "./overview.css";
 
 const OVERVIEW_QUERY_KEY = ["gateway-overview"] as const;
 const DEFAULT_GATEWAY_NAME = "Gateway";
 const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
-const LANGUAGE_STORAGE_KEY = "openclaw.desktop.overview.language";
 const AUTH_REQUIRED_CODES = new Set([
   "AUTH_REQUIRED",
   "AUTH_TOKEN_MISSING",
@@ -66,14 +67,6 @@ const AUTH_FAILURE_CODES = new Set([
   "AUTH_TAILSCALE_WHOIS_FAILED",
   "AUTH_TAILSCALE_IDENTITY_MISMATCH",
 ]);
-const LANGUAGE_OPTIONS = [
-  { value: "en", label: "English" },
-  { value: "zh-CN", label: "简体中文" },
-  { value: "zh-TW", label: "繁體中文" },
-  { value: "es", label: "Español" },
-  { value: "de", label: "Deutsch" },
-  { value: "pt-BR", label: "Português (Brasil)" },
-] as const;
 
 type AlertTone = "danger" | "warn" | "info" | "ok";
 
@@ -92,32 +85,9 @@ type TimelineItem = {
   timestamp: number;
 };
 
-function normalizeLanguage(value: string | null | undefined): string {
-  if (!value) {
-    return "en";
-  }
-  const exact = LANGUAGE_OPTIONS.find((option) => option.value === value);
-  if (exact) {
-    return exact.value;
-  }
-  const base = value.split("-")[0]?.toLowerCase() ?? "en";
-  return LANGUAGE_OPTIONS.find((option) => option.value.toLowerCase() === base)?.value ?? "en";
-}
-
-function getInitialLanguage(): string {
-  if (typeof window === "undefined") {
-    return "en";
-  }
-  try {
-    return normalizeLanguage(window.localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? navigator.language);
-  } catch {
-    return normalizeLanguage(navigator.language);
-  }
-}
-
-function formatDurationHuman(durationMs: number | null | undefined): string {
+function formatDurationHuman(durationMs: number | null | undefined, copy: OverviewCopy): string {
   if (!durationMs || durationMs <= 0) {
-    return "n/a";
+    return copy.na;
   }
 
   const totalSeconds = Math.floor(durationMs / 1_000);
@@ -127,22 +97,22 @@ function formatDurationHuman(durationMs: number | null | undefined): string {
   const seconds = totalSeconds % 60;
 
   const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (seconds > 0 && parts.length === 0) parts.push(`${seconds}s`);
+  if (days > 0) parts.push(copy.zeroSeconds === "0秒" ? `${days}天` : `${days}d`);
+  if (hours > 0) parts.push(copy.zeroSeconds === "0秒" ? `${hours}小时` : `${hours}h`);
+  if (minutes > 0) parts.push(copy.zeroSeconds === "0秒" ? `${minutes}分` : `${minutes}m`);
+  if (seconds > 0 && parts.length === 0) parts.push(copy.zeroSeconds === "0秒" ? `${seconds}秒` : `${seconds}s`);
 
-  return parts.slice(0, 2).join(" ") || "0s";
+  return parts.slice(0, 2).join(" ") || copy.zeroSeconds;
 }
 
-function formatRelativeTimestamp(timestamp: number | null | undefined): string {
+function formatRelativeTimestamp(timestamp: number | null | undefined, locale: string, copy: OverviewCopy): string {
   if (!timestamp || Number.isNaN(timestamp)) {
-    return "n/a";
+    return copy.na;
   }
 
   const diff = timestamp - Date.now();
   const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
 
   if (abs < 60_000) {
     return rtf.format(Math.round(diff / 1_000), "second");
@@ -157,22 +127,22 @@ function formatRelativeTimestamp(timestamp: number | null | undefined): string {
     return rtf.format(Math.round(diff / 86_400_000), "day");
   }
 
-  return new Date(timestamp).toLocaleString();
+  return new Date(timestamp).toLocaleString(locale);
 }
 
-function formatCount(value: number | null | undefined): string {
-  return value == null ? "n/a" : value.toLocaleString();
+function formatCount(value: number | null | undefined, locale: string, copy: OverviewCopy): string {
+  return value == null ? copy.na : value.toLocaleString(locale);
 }
 
-function formatCompactCount(value: number | null | undefined): string {
-  if (value == null) return "n/a";
+function formatCompactCount(value: number | null | undefined, locale: string, copy: OverviewCopy): string {
+  if (value == null) return copy.na;
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toLocaleString();
+  return value.toLocaleString(locale);
 }
 
-function formatNextRun(timestamp: number | null | undefined): string {
-  return timestamp ? formatRelativeTimestamp(timestamp) : "n/a";
+function formatNextRun(timestamp: number | null | undefined, locale: string, copy: OverviewCopy): string {
+  return timestamp ? formatRelativeTimestamp(timestamp, locale, copy) : copy.na;
 }
 
 function formatPercent(value: number): string {
@@ -231,23 +201,23 @@ function buildConnectPayload(config: GatewayConfig | null, gatewayUrl: string, t
   };
 }
 
-function connectionLabel(state: ConnectionState): string {
+function connectionLabel(state: ConnectionState, copy: OverviewCopy): string {
   switch (state) {
     case "connected":
-      return "Online";
+      return copy.connectionStates.online;
     case "connecting":
-      return "Connecting";
+      return copy.connectionStates.connecting;
     case "authenticating":
-      return "Authenticating";
+      return copy.connectionStates.authenticating;
     case "pairing_required":
-      return "Pairing required";
+      return copy.connectionStates.pairingRequired;
     case "error":
-      return "Error";
+      return copy.connectionStates.error;
     case "reconnecting":
-      return "Reconnecting";
+      return copy.connectionStates.reconnecting;
     case "disconnected":
     default:
-      return "Offline";
+      return copy.connectionStates.offline;
   }
 }
 
@@ -308,17 +278,17 @@ function resolveHealthTone(
   return connectionState === "connected" ? "ok" : "warn";
 }
 
-function resolveHealthLabel(tone: AlertTone): string {
+function resolveHealthLabel(tone: AlertTone, copy: OverviewCopy): string {
   switch (tone) {
     case "ok":
-      return "Healthy";
+      return copy.healthLabels.ok;
     case "danger":
-      return "Degraded";
+      return copy.healthLabels.danger;
     case "warn":
-      return "Checking";
+      return copy.healthLabels.warn;
     case "info":
     default:
-      return "Unknown";
+      return copy.healthLabels.info;
   }
 }
 
@@ -332,7 +302,7 @@ function extractHeartbeatAt(heartbeat: JsonRecord | null): number | null {
   );
 }
 
-function getChartBars(data: OverviewData | undefined) {
+function getChartBars(data: OverviewData | undefined, locale: string) {
   const days = data?.usageSessions?.aggregates.daily ?? [];
   const costDaily = data?.usageCost?.daily ?? [];
   const fallbackRange = createDefaultDateRange(7);
@@ -344,7 +314,7 @@ function getChartBars(data: OverviewData | undefined) {
     const costDay = costDaily.find((entry) => entry.date === iso);
     return {
       date: iso,
-      label: new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" }),
+      label: new Date(`${iso}T00:00:00`).toLocaleDateString(locale, { weekday: "short" }),
       tokens: sessionDay?.tokens ?? costDay?.totalTokens ?? 0,
       cost: sessionDay?.cost ?? costDay?.totalCost ?? 0,
       messages: sessionDay?.messages ?? 0,
@@ -358,7 +328,7 @@ function getChartBars(data: OverviewData | undefined) {
   }));
 }
 
-function getTopModels(data: OverviewData | undefined): Array<UsageModelAggregateEntry & { label: string; share: number }> {
+function getTopModels(data: OverviewData | undefined, copy: OverviewCopy): Array<UsageModelAggregateEntry & { label: string; share: number }> {
   const byModel = data?.usageSessions?.aggregates.byModel ?? [];
   const totalTokens = byModel.reduce((sum, entry) => sum + (entry.totals.totalTokens ?? 0), 0);
   return [...byModel]
@@ -366,17 +336,17 @@ function getTopModels(data: OverviewData | undefined): Array<UsageModelAggregate
     .slice(0, 5)
     .map((entry) => ({
       ...entry,
-      label: [entry.provider, entry.model].filter(Boolean).join("/") || "Unspecified model",
+      label: [entry.provider, entry.model].filter(Boolean).join("/") || copy.modelUnspecified,
       share: totalTokens > 0 ? ((entry.totals.totalTokens ?? 0) / totalTokens) * 100 : 0,
     }));
 }
 
-function getProviderSummary(data: OverviewData | undefined): Array<{ label: string; tokens: number }> {
+function getProviderSummary(data: OverviewData | undefined, copy: OverviewCopy): Array<{ label: string; tokens: number }> {
   return [...(data?.usageSessions?.aggregates.byProvider ?? [])]
     .sort((left, right) => (right.totals.totalTokens ?? 0) - (left.totals.totalTokens ?? 0))
     .slice(0, 4)
     .map((entry) => ({
-      label: entry.provider || "unknown",
+      label: entry.provider || copy.providerUnknown,
       tokens: entry.totals.totalTokens ?? 0,
     }));
 }
@@ -388,6 +358,7 @@ function createAlerts(
   lastErrorCode: string | null,
   activeConfig: GatewayConfig | null,
   healthTone: AlertTone,
+  copy: OverviewCopy,
 ): AlertItem[] {
   const alerts: AlertItem[] = [];
 
@@ -395,7 +366,7 @@ function createAlerts(
     alerts.push({
       id: "connection-error",
       tone: "danger",
-      title: connectionState === "pairing_required" ? "Pairing required" : "Gateway connection issue",
+      title: connectionState === "pairing_required" ? copy.alerts.pairingRequired : copy.alerts.gatewayConnectionIssue,
       detail: lastError,
     });
   }
@@ -404,8 +375,8 @@ function createAlerts(
     alerts.push({
       id: "auth-required",
       tone: "warn",
-      title: "Authentication required",
-      detail: "Provide a valid gateway token or trusted proxy session, then reconnect.",
+      title: copy.alerts.authenticationRequired,
+      detail: copy.alerts.authenticationRequiredDetail,
     });
   }
 
@@ -413,8 +384,8 @@ function createAlerts(
     alerts.push({
       id: "health-degraded",
       tone: "danger",
-      title: "Health checks degraded",
-      detail: "The latest status/health snapshot indicates the gateway may not be serving requests cleanly.",
+      title: copy.alerts.healthChecksDegraded,
+      detail: copy.alerts.healthChecksDegradedDetail,
     });
   }
 
@@ -422,8 +393,8 @@ function createAlerts(
     alerts.push({
       id: "partial-refresh",
       tone: "warn",
-      title: "Partial data refresh",
-      detail: `${data?.issues.length ?? 0} overview RPC calls failed, so some cards may be stale until the next refresh.`,
+      title: copy.alerts.partialDataRefresh,
+      detail: copy.alerts.partialDataRefreshDetail(data?.issues.length ?? 0),
     });
   }
 
@@ -431,8 +402,8 @@ function createAlerts(
     alerts.push({
       id: "token-missing",
       tone: "info",
-      title: "Token not stored",
-      detail: "This profile has no persisted token. Reconnect from a tokenized URL to streamline future access.",
+      title: copy.alerts.tokenNotStored,
+      detail: copy.alerts.tokenNotStoredDetail,
     });
   }
 
@@ -440,8 +411,8 @@ function createAlerts(
     alerts.push({
       id: "models-empty",
       tone: "warn",
-      title: "No models catalog reported",
-      detail: "`models.list` returned empty. Verify providers are configured and reachable.",
+      title: copy.alerts.noModelsCatalog,
+      detail: copy.alerts.noModelsCatalogDetail,
     });
   }
 
@@ -449,15 +420,15 @@ function createAlerts(
     alerts.push({
       id: "cron-disabled",
       tone: "info",
-      title: "Cron is disabled",
-      detail: "Scheduled automations are paused. Re-enable cron if you expect recurring tasks to run.",
+      title: copy.alerts.cronDisabled,
+      detail: copy.alerts.cronDisabledDetail,
     });
   }
 
   return alerts.slice(0, 5);
 }
 
-function buildTimeline(data: OverviewData | undefined, heartbeatAt: number | null): TimelineItem[] {
+function buildTimeline(data: OverviewData | undefined, heartbeatAt: number | null, locale: string, copy: OverviewCopy): TimelineItem[] {
   const items: TimelineItem[] = [];
 
   for (const session of data?.sessions.slice(0, 5) ?? []) {
@@ -466,7 +437,7 @@ function buildTimeline(data: OverviewData | undefined, heartbeatAt: number | nul
       id: `session-${session.key}`,
       kind: "session",
       title: session.title,
-      detail: `${session.messageCount.toLocaleString()} messages · ${session.agentId ?? "unassigned agent"}`,
+      detail: copy.timeline.sessionDetail(session.messageCount.toLocaleString(locale), session.agentId ?? copy.unassignedAgent),
       timestamp: session.updatedAt,
     });
   }
@@ -485,8 +456,8 @@ function buildTimeline(data: OverviewData | undefined, heartbeatAt: number | nul
     items.push({
       id: `heartbeat-${heartbeatAt}`,
       kind: "heartbeat",
-      title: "Heartbeat received",
-      detail: "Gateway heartbeat updated the local client diagnostics.",
+      title: copy.timeline.heartbeatReceived,
+      detail: copy.timeline.heartbeatDetail,
       timestamp: heartbeatAt,
     });
   }
@@ -512,15 +483,18 @@ export function OverviewPage() {
   const selectedAgentId = useChatStore((store) => store.selectedAgentId);
   const selectSession = useChatStore((store) => store.selectSession);
   const selectAgent = useChatStore((store) => store.selectAgent);
+  const language = useAppPreferencesStore((store) => store.language);
+  const setLanguage = useAppPreferencesStore((store) => store.setLanguage);
   const { data: agentDirectory } = useAgentsDirectory();
 
   const [gatewayUrlDraft, setGatewayUrlDraft] = useState(DEFAULT_GATEWAY_URL);
   const [tokenDraft, setTokenDraft] = useState("");
   const [passwordDraft, setPasswordDraft] = useState("");
   const [sessionKeyDraft, setSessionKeyDraft] = useState("main");
-  const [languageDraft, setLanguageDraft] = useState(getInitialLanguage);
   const [isConnecting, setIsConnecting] = useState(false);
   const [, setLiveTick] = useState(0);
+  const copy = getOverviewCopy(language);
+  const locale = language;
 
   const isConnected = connectionState === "connected";
   const activeConfig = useMemo(
@@ -536,14 +510,6 @@ export function OverviewPage() {
   useEffect(() => {
     setSessionKeyDraft(selectedSessionId?.trim() || "main");
   }, [selectedSessionId]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, languageDraft);
-    } catch {
-      // Ignore local storage failures.
-    }
-  }, [languageDraft]);
 
   useEffect(() => {
     let batchedTimer: number | null = null;
@@ -588,24 +554,24 @@ export function OverviewPage() {
   const statusPolicy = asRecord(asRecord(statusRecord)?.policy);
   const authMode = readString(snapshot, "authMode") ?? readString(statusRecord, "authMode");
   const trustedProxy = isTrustedProxy(authMode);
-  const uptime = formatDurationHuman(readNumber(snapshot, "uptimeMs") ?? readNumber(statusRecord, "uptimeMs"));
+  const uptime = formatDurationHuman(readNumber(snapshot, "uptimeMs") ?? readNumber(statusRecord, "uptimeMs"), copy);
   const tickIntervalMs = readNumber(asRecord(snapshot?.policy), "tickIntervalMs") ?? readNumber(statusPolicy, "tickIntervalMs");
-  const tickInterval = tickIntervalMs != null ? `${tickIntervalMs}ms` : "n/a";
+  const tickInterval = tickIntervalMs != null ? `${tickIntervalMs}ms` : copy.na;
   const lastError = connectionError?.message ?? null;
   const lastErrorCode = connectionError?.code ?? null;
   const heartbeatAt = extractHeartbeatAt(overviewQuery.data?.heartbeat ?? null) ?? (gateway.lastEventAt || null);
   const healthTone = resolveHealthTone(healthRecord, statusRecord, connectionState, Boolean(lastError));
   const alerts = useMemo(
-    () => createAlerts(overviewQuery.data, connectionState, lastError, lastErrorCode, activeConfig, healthTone),
-    [overviewQuery.data, connectionState, lastError, lastErrorCode, activeConfig, healthTone],
+    () => createAlerts(overviewQuery.data, connectionState, lastError, lastErrorCode, activeConfig, healthTone, copy),
+    [overviewQuery.data, connectionState, lastError, lastErrorCode, activeConfig, healthTone, copy],
   );
   const timeline = useMemo(
-    () => buildTimeline(overviewQuery.data, heartbeatAt),
-    [overviewQuery.data, heartbeatAt],
+    () => buildTimeline(overviewQuery.data, heartbeatAt, locale, copy),
+    [overviewQuery.data, heartbeatAt, locale, copy],
   );
-  const chartBars = useMemo(() => getChartBars(overviewQuery.data), [overviewQuery.data]);
-  const topModels = useMemo(() => getTopModels(overviewQuery.data), [overviewQuery.data]);
-  const providerSummary = useMemo(() => getProviderSummary(overviewQuery.data), [overviewQuery.data]);
+  const chartBars = useMemo(() => getChartBars(overviewQuery.data, locale), [overviewQuery.data, locale]);
+  const topModels = useMemo(() => getTopModels(overviewQuery.data, copy), [overviewQuery.data, copy]);
+  const providerSummary = useMemo(() => getProviderSummary(overviewQuery.data, copy), [overviewQuery.data, copy]);
 
   const usageTotals = overviewQuery.data?.usageCost?.totals ?? overviewQuery.data?.usageSessions?.totals ?? null;
   const modelCatalogCount = overviewQuery.data?.models.length ?? 0;
@@ -613,8 +579,10 @@ export function OverviewPage() {
   const totalMessages = overviewQuery.data?.usageSessions?.aggregates.messages.total ?? 0;
   const authMethods = gateway.authResult?.methods.length ?? 0;
   const authEvents = gateway.authResult?.events.length ?? 0;
-  const connectionStatusLabel = connectionLabel(connectionState);
-  const refreshLabel = overviewQuery.data ? `Updated ${formatRelativeTime(overviewQuery.data.loadedAt)}` : "Waiting for data";
+  const connectionStatusLabel = connectionLabel(connectionState, copy);
+  const refreshLabel = overviewQuery.data
+    ? copy.hero.updated(formatRelativeTimestamp(overviewQuery.data.loadedAt, locale, copy))
+    : copy.hero.waitingForData;
 
   async function handleConnect() {
     const nextUrl = gatewayUrlDraft.trim();
@@ -685,13 +653,13 @@ export function OverviewPage() {
 
           {shouldShowPairingHint(isConnected, lastError, lastErrorCode) && (
             <div className="overview-callout__stack">
-              <div>This device needs pairing approval from the gateway host.</div>
+              <div>{copy.callouts.pairingNeedApproval}</div>
               <div className="overview-callout__code">
                 <span>openclaw devices list</span>
                 <span>openclaw devices approve &lt;requestId&gt;</span>
               </div>
               <a className="overview-link" href="https://docs.openclaw.ai/web/control-ui#device-pairing-first-connection" target="_blank" rel="noreferrer">
-                Docs: Device pairing
+                {copy.callouts.devicePairingDocs}
               </a>
             </div>
           )}
@@ -700,32 +668,30 @@ export function OverviewPage() {
             <div className="overview-callout__stack">
               <div>
                 {lastErrorCode && AUTH_REQUIRED_CODES.has(lastErrorCode)
-                  ? "The gateway requires authentication. Add a token or trusted proxy session, then reconnect."
-                  : "Auth failed. Re-copy a tokenized URL with openclaw dashboard --no-open, or update the token, then click Connect."}
+                  ? copy.callouts.authRequired
+                  : copy.callouts.authFailed}
               </div>
               <div className="overview-callout__code">
                 <span>openclaw dashboard --no-open</span>
                 <span>openclaw doctor --generate-gateway-token</span>
               </div>
               <a className="overview-link" href="https://docs.openclaw.ai/web/dashboard" target="_blank" rel="noreferrer">
-                Docs: Control UI auth
+                {copy.callouts.authDocs}
               </a>
             </div>
           )}
 
           {shouldShowInsecureContextHint(isConnected, lastError, lastErrorCode) && (
             <div className="overview-callout__stack">
-              <div>
-                This page is HTTP, so the browser blocks device identity. Use HTTPS through Tailscale Serve, or open <code>http://127.0.0.1:18789</code> on the gateway host.
-              </div>
-              <div>If you must stay on HTTP, set <code>gateway.controlUi.allowInsecureAuth: true</code> (token-only).</div>
+              <div>{copy.callouts.insecureHttp}</div>
+              <div>{copy.callouts.insecureHttpDetail}</div>
               <div className="overview-callout__links">
                 <a className="overview-link" href="https://docs.openclaw.ai/gateway/tailscale" target="_blank" rel="noreferrer">
-                  Docs: Tailscale Serve
+                  {copy.callouts.tailscaleDocs}
                 </a>
                 <span className="overview-muted">·</span>
                 <a className="overview-link" href="https://docs.openclaw.ai/web/control-ui#insecure-http" target="_blank" rel="noreferrer">
-                  Docs: Insecure HTTP
+                  {copy.callouts.insecureHttpDocs}
                 </a>
               </div>
             </div>
@@ -741,22 +707,22 @@ export function OverviewPage() {
     if (overviewQuery.data?.issues.length) {
       return (
         <div className="overview-callout" aria-live="polite">
-          Some overview RPCs failed to refresh, so a few panels may still be stale while the dashboard keeps the last good snapshot visible.
+          {copy.callouts.partialRpc}
         </div>
       );
     }
 
-    return <div className="overview-callout">Use Channels to link WhatsApp, Telegram, Discord, Signal, or iMessage and keep their health visible here.</div>;
+    return <div className="overview-callout">{copy.callouts.channelsHint}</div>;
   })();
 
   return (
     <div className="overview-page">
       <section className="overview-hero">
         <div>
-          <div className="overview-hero__eyebrow">Control Surface</div>
-          <h2 className="overview-hero__title">Overview</h2>
+          <div className="overview-hero__eyebrow">{copy.hero.eyebrow}</div>
+          <h2 className="overview-hero__title">{copy.hero.title}</h2>
           <p className="overview-hero__subtitle">
-            Official-style gateway command center with live health, usage, alerts, and quick actions.
+            {copy.hero.subtitle}
           </p>
         </div>
         <div className="overview-hero__meta">
@@ -777,7 +743,7 @@ export function OverviewPage() {
             disabled={!isConnected || overviewQuery.isFetching}
           >
             <RefreshCw size={14} className={overviewQuery.isFetching ? "spin" : undefined} />
-            {overviewQuery.isFetching ? "Refreshing…" : "Refresh"}
+            {overviewQuery.isFetching ? copy.hero.refreshing : copy.hero.refresh}
           </button>
         </div>
       </section>
@@ -786,8 +752,8 @@ export function OverviewPage() {
         <div className="overview-card overview-card--access">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Gateway Access</div>
-              <div className="overview-card__subtitle">Same connection surface as the official WebUI, with desktop-friendly profile switching.</div>
+              <div className="overview-card__title">{copy.access.title}</div>
+              <div className="overview-card__subtitle">{copy.access.subtitle}</div>
             </div>
             <div className="overview-inline-status">
               <span className={cn("overview-status-dot", `is-${connectionTone(connectionState)}`)} />
@@ -797,7 +763,7 @@ export function OverviewPage() {
 
           <div className="overview-profile-row">
             <label className="overview-field overview-field--compact">
-              <span>Profile</span>
+              <span>{copy.access.profile}</span>
               <select
                 value={activeConfig?.id ?? ""}
                 onChange={(event) => {
@@ -808,7 +774,7 @@ export function OverviewPage() {
                 }}
                 disabled={configs.length === 0}
               >
-                {configs.length === 0 ? <option value="">No saved profiles</option> : null}
+                {configs.length === 0 ? <option value="">{copy.access.noSavedProfiles}</option> : null}
                 {configs.map((config) => (
                   <option key={config.id} value={config.id}>
                     {config.name}
@@ -827,13 +793,13 @@ export function OverviewPage() {
               disabled={!activeConfig?.id || isConnecting}
             >
               <ArrowRightLeft size={14} />
-              Switch Config
+              {copy.access.switchConfig}
             </button>
           </div>
 
           <div className="overview-form-grid">
             <label className="overview-field">
-              <span>WebSocket URL</span>
+              <span>{copy.access.websocketUrl}</span>
               <input
                 value={gatewayUrlDraft}
                 onChange={(event) => setGatewayUrlDraft(event.target.value)}
@@ -843,7 +809,7 @@ export function OverviewPage() {
 
             {!trustedProxy && (
               <label className="overview-field">
-                <span>Gateway Token</span>
+                <span>{copy.access.gatewayToken}</span>
                 <input
                   value={tokenDraft}
                   onChange={(event) => setTokenDraft(event.target.value)}
@@ -854,19 +820,19 @@ export function OverviewPage() {
 
             {!trustedProxy && (
               <label className="overview-field">
-                <span>Password (not stored)</span>
+                <span>{copy.access.password}</span>
                 <input
                   type="password"
                   value={passwordDraft}
                   onChange={(event) => setPasswordDraft(event.target.value)}
-                  placeholder="system or shared password"
+                  placeholder={copy.access.passwordPlaceholder}
                   disabled
                 />
               </label>
             )}
 
             <label className="overview-field">
-              <span>Default Session Key</span>
+              <span>{copy.access.defaultSessionKey}</span>
               <input
                 value={sessionKeyDraft}
                 onChange={(event) => setSessionKeyDraft(event.target.value)}
@@ -875,8 +841,8 @@ export function OverviewPage() {
             </label>
 
             <label className="overview-field">
-              <span>Language</span>
-              <select value={languageDraft} onChange={(event) => setLanguageDraft(event.target.value)}>
+              <span>{copy.access.language}</span>
+              <select value={language} onChange={(event) => setLanguage(event.target.value)}>
                 {LANGUAGE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -896,14 +862,14 @@ export function OverviewPage() {
               disabled={isConnecting || gatewayUrlDraft.trim().length === 0}
             >
               <Wifi size={14} />
-              {isConnecting ? "Connecting…" : "Connect"}
+              {isConnecting ? copy.access.connecting : copy.access.connect}
             </button>
             <button type="button" className="overview-btn" onClick={handleCreateSession} disabled={!isConnected}>
               <MessageSquarePlus size={14} />
-              New Session
+              {copy.access.newSession}
             </button>
             <span className="overview-muted overview-actions-row__hint">
-              {trustedProxy ? "Authenticated via trusted proxy." : "Apply URL or token changes from here, then jump straight into a new session."}
+              {trustedProxy ? copy.access.trustedProxyHint : copy.access.sessionHint}
             </span>
           </div>
         </div>
@@ -911,18 +877,18 @@ export function OverviewPage() {
         <div className="overview-card overview-card--snapshot">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">System Snapshot</div>
-              <div className="overview-card__subtitle">Gateway, connection, and health at a glance, aligned with upstream overview semantics.</div>
+              <div className="overview-card__title">{copy.snapshot.title}</div>
+              <div className="overview-card__subtitle">{copy.snapshot.subtitle}</div>
             </div>
             <div className={cn("overview-health-badge", `is-${healthTone}`)}>
               <ShieldCheck size={14} />
-              {resolveHealthLabel(healthTone)}
+              {resolveHealthLabel(healthTone, copy)}
             </div>
           </div>
 
           <div className="overview-status-grid">
             <div className="overview-status-card">
-              <div className="overview-status-card__label">Gateway</div>
+              <div className="overview-status-card__label">{copy.snapshot.gateway}</div>
               <div className="overview-status-card__value">
                 <span className={cn("overview-status-dot", `is-${connectionTone(connectionState)}`)} />
                 {connectionStatusLabel}
@@ -930,33 +896,33 @@ export function OverviewPage() {
               <div className="overview-status-card__meta">{activeConfig?.name ?? DEFAULT_GATEWAY_NAME}</div>
             </div>
             <div className="overview-status-card">
-              <div className="overview-status-card__label">Connection</div>
-              <div className="overview-status-card__value">{gateway.runtimeContext.socketTransport === "tauri-plugin-websocket" ? "Desktop WS" : "WebSocket"}</div>
+              <div className="overview-status-card__label">{copy.snapshot.connection}</div>
+              <div className="overview-status-card__value">{gateway.runtimeContext.socketTransport === "tauri-plugin-websocket" ? copy.desktopWs : copy.webSocket}</div>
               <div className="overview-status-card__meta">{activeConfig?.url ?? DEFAULT_GATEWAY_URL}</div>
             </div>
             <div className="overview-status-card">
-              <div className="overview-status-card__label">Health</div>
-              <div className="overview-status-card__value">{resolveHealthLabel(healthTone)}</div>
-              <div className="overview-status-card__meta">{readString(healthRecord, "status") ?? readString(healthRecord, "state") ?? "Live status probe"}</div>
+              <div className="overview-status-card__label">{copy.snapshot.health}</div>
+              <div className="overview-status-card__value">{resolveHealthLabel(healthTone, copy)}</div>
+              <div className="overview-status-card__meta">{readString(healthRecord, "status") ?? readString(healthRecord, "state") ?? copy.liveStatusProbe}</div>
             </div>
           </div>
 
           <div className="overview-stat-grid">
             <div className="overview-stat">
-              <div className="overview-stat__label">Uptime</div>
+              <div className="overview-stat__label">{copy.snapshot.uptime}</div>
               <div className="overview-stat__value">{uptime}</div>
             </div>
             <div className="overview-stat">
-              <div className="overview-stat__label">Tick Interval</div>
+              <div className="overview-stat__label">{copy.snapshot.tickInterval}</div>
               <div className="overview-stat__value">{tickInterval}</div>
             </div>
             <div className="overview-stat">
-              <div className="overview-stat__label">Last Heartbeat</div>
-              <div className="overview-stat__value">{formatRelativeTimestamp(heartbeatAt)}</div>
+              <div className="overview-stat__label">{copy.snapshot.lastHeartbeat}</div>
+              <div className="overview-stat__value">{formatRelativeTimestamp(heartbeatAt, locale, copy)}</div>
             </div>
             <div className="overview-stat">
-              <div className="overview-stat__label">Channels Refresh</div>
-              <div className="overview-stat__value">{formatRelativeTimestamp(overviewQuery.data?.lastChannelsRefresh)}</div>
+              <div className="overview-stat__label">{copy.snapshot.channelsRefresh}</div>
+              <div className="overview-stat__value">{formatRelativeTimestamp(overviewQuery.data?.lastChannelsRefresh, locale, copy)}</div>
             </div>
           </div>
 
@@ -967,39 +933,44 @@ export function OverviewPage() {
       <section className="overview-grid overview-grid--metrics">
         <div className="overview-card overview-card--metric">
           <div className="overview-metric__icon"><Sparkles size={16} /></div>
-          <div className="overview-stat__label">Active Sessions</div>
-          <div className="overview-stat__value">{formatCount(overviewQuery.data?.sessionsCount)}</div>
-          <div className="overview-muted">Recent session keys tracked by the gateway.</div>
+          <div className="overview-stat__label">{copy.metrics.activeSessions}</div>
+          <div className="overview-stat__value">{formatCount(overviewQuery.data?.sessionsCount, locale, copy)}</div>
+          <div className="overview-muted">{copy.metrics.activeSessionsDetail}</div>
         </div>
         <div className="overview-card overview-card--metric">
           <div className="overview-metric__icon"><Wifi size={16} /></div>
-          <div className="overview-stat__label">Presence Beacons</div>
-          <div className="overview-stat__value">{formatCount(overviewQuery.data?.presenceCount)}</div>
-          <div className="overview-muted">Instances seen in the latest presence snapshot.</div>
+          <div className="overview-stat__label">{copy.metrics.presenceBeacons}</div>
+          <div className="overview-stat__value">{formatCount(overviewQuery.data?.presenceCount, locale, copy)}</div>
+          <div className="overview-muted">{copy.metrics.presenceBeaconsDetail}</div>
         </div>
         <div className="overview-card overview-card--metric">
           <div className="overview-metric__icon"><Gauge size={16} /></div>
-          <div className="overview-stat__label">7-Day Tokens</div>
-          <div className="overview-stat__value">{formatCompactCount(usageTotals?.totalTokens)}</div>
-          <div className="overview-muted">{formatCount(totalMessages)} messages in the current usage window.</div>
+          <div className="overview-stat__label">{copy.metrics.sevenDayTokens}</div>
+          <div className="overview-stat__value">{formatCompactCount(usageTotals?.totalTokens, locale, copy)}</div>
+          <div className="overview-muted">{copy.metrics.messagesInWindow(formatCount(totalMessages, locale, copy))}</div>
         </div>
         <div className="overview-card overview-card--metric">
           <div className="overview-metric__icon"><HardDrive size={16} /></div>
-          <div className="overview-stat__label">Usage Cost</div>
-          <div className="overview-stat__value">{usageTotals ? formatCurrency(usageTotals.totalCost) : "n/a"}</div>
-          <div className="overview-muted">Input, output, cache read, and cache write blended cost.</div>
+          <div className="overview-stat__label">{copy.metrics.usageCost}</div>
+          <div className="overview-stat__value">{usageTotals ? formatCurrency(usageTotals.totalCost) : copy.na}</div>
+          <div className="overview-muted">{copy.metrics.usageCostDetail}</div>
         </div>
         <div className="overview-card overview-card--metric">
           <div className="overview-metric__icon"><Bot size={16} /></div>
-          <div className="overview-stat__label">Model Coverage</div>
-          <div className="overview-stat__value">{formatCount(activeModelCount || modelCatalogCount)}</div>
-          <div className="overview-muted">{formatCount(modelCatalogCount)} catalog models returned by `models.list`.</div>
+          <div className="overview-stat__label">{copy.metrics.modelCoverage}</div>
+          <div className="overview-stat__value">{formatCount(activeModelCount || modelCatalogCount, locale, copy)}</div>
+          <div className="overview-muted">{copy.metrics.modelCoverageDetail(formatCount(modelCatalogCount, locale, copy))}</div>
         </div>
         <div className="overview-card overview-card--metric">
           <div className="overview-metric__icon"><Activity size={16} /></div>
-          <div className="overview-stat__label">Channels Online</div>
-          <div className="overview-stat__value">{overviewQuery.data ? `${overviewQuery.data.channelsOnline}/${overviewQuery.data.channelsTotal}` : "n/a"}</div>
-          <div className="overview-muted">Cron {overviewQuery.data?.cronEnabled == null ? "n/a" : overviewQuery.data.cronEnabled ? "enabled" : "disabled"} · next run {formatNextRun(overviewQuery.data?.cronNextWakeAtMs)}</div>
+          <div className="overview-stat__label">{copy.metrics.channelsOnline}</div>
+          <div className="overview-stat__value">{overviewQuery.data ? `${overviewQuery.data.channelsOnline}/${overviewQuery.data.channelsTotal}` : copy.na}</div>
+          <div className="overview-muted">
+            {copy.metrics.cronSummary(
+              overviewQuery.data?.cronEnabled == null ? copy.na : overviewQuery.data.cronEnabled ? copy.metrics.cronEnabled : copy.metrics.cronDisabled,
+              formatNextRun(overviewQuery.data?.cronNextWakeAtMs, locale, copy),
+            )}
+          </div>
         </div>
       </section>
 
@@ -1007,10 +978,10 @@ export function OverviewPage() {
         <div className="overview-card">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Token Usage</div>
-              <div className="overview-card__subtitle">Seven-day token and cost trend, optimized for low-jank refreshes.</div>
+              <div className="overview-card__title">{copy.usage.title}</div>
+              <div className="overview-card__subtitle">{copy.usage.subtitle}</div>
             </div>
-            <div className="overview-inline-status">{usageTotals ? formatTokens(usageTotals.totalTokens) : "n/a"}</div>
+            <div className="overview-inline-status">{usageTotals ? formatTokens(usageTotals.totalTokens) : copy.na}</div>
           </div>
 
           <div className="overview-chart">
@@ -1018,11 +989,11 @@ export function OverviewPage() {
               <div key={bar.date} className="overview-chart__column">
                 <div
                   className="overview-chart__bar-wrap"
-                  title={`${bar.label}: ${formatTokens(bar.tokens)} tokens · ${formatCurrency(bar.cost)}`}
+                  title={copy.chart.tooltip(bar.label, formatTokens(bar.tokens), formatCurrency(bar.cost))}
                 >
                   <div className="overview-chart__bar" style={{ height: `${bar.percent}%` }} />
                 </div>
-                <div className="overview-chart__value">{bar.tokens > 0 ? formatCompactCount(bar.tokens) : "—"}</div>
+                <div className="overview-chart__value">{bar.tokens > 0 ? formatCompactCount(bar.tokens, locale, copy) : "—"}</div>
                 <div className="overview-chart__label">{bar.label}</div>
               </div>
             ))}
@@ -1030,16 +1001,16 @@ export function OverviewPage() {
 
           <div className="overview-kpi-row">
             <div className="overview-kpi">
-              <span>Messages</span>
-              <strong>{formatCount(totalMessages)}</strong>
+              <span>{copy.usage.messages}</span>
+              <strong>{formatCount(totalMessages, locale, copy)}</strong>
             </div>
             <div className="overview-kpi">
-              <span>Cost</span>
-              <strong>{usageTotals ? formatCurrency(usageTotals.totalCost) : "n/a"}</strong>
+              <span>{copy.usage.cost}</span>
+              <strong>{usageTotals ? formatCurrency(usageTotals.totalCost) : copy.na}</strong>
             </div>
             <div className="overview-kpi">
-              <span>Cache Read</span>
-              <strong>{usageTotals ? formatTokens(usageTotals.cacheRead) : "n/a"}</strong>
+              <span>{copy.usage.cacheRead}</span>
+              <strong>{usageTotals ? formatTokens(usageTotals.cacheRead) : copy.na}</strong>
             </div>
           </div>
         </div>
@@ -1047,14 +1018,14 @@ export function OverviewPage() {
         <div className="overview-card">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Model Distribution</div>
-              <div className="overview-card__subtitle">Top models by token share in the same usage window.</div>
+              <div className="overview-card__title">{copy.models.title}</div>
+              <div className="overview-card__subtitle">{copy.models.subtitle}</div>
             </div>
-            <div className="overview-inline-status">{providerSummary.length} providers</div>
+            <div className="overview-inline-status">{copy.models.providersCount(providerSummary.length)}</div>
           </div>
 
           {topModels.length === 0 ? (
-            <div className="overview-empty-inline">No model usage has been reported for the current window yet.</div>
+            <div className="overview-empty-inline">{copy.models.empty}</div>
           ) : (
             <div className="overview-distribution-list">
               {topModels.map((model) => (
@@ -1062,7 +1033,12 @@ export function OverviewPage() {
                   <div className="overview-distribution-row__top">
                     <div>
                       <div className="overview-distribution-row__label">{model.label}</div>
-                      <div className="overview-muted">{formatTokens(model.totals.totalTokens ?? 0)} tokens · {formatCount(model.count ?? 0)} runs</div>
+                      <div className="overview-muted">
+                        {copy.models.tokensAndRuns(
+                          formatTokens(model.totals.totalTokens ?? 0),
+                          formatCount(model.count ?? 0, locale, copy),
+                        )}
+                      </div>
                     </div>
                     <div className="overview-distribution-row__share">{formatPercent(model.share)}</div>
                   </div>
@@ -1078,7 +1054,7 @@ export function OverviewPage() {
             <div className="overview-tag-row">
               {providerSummary.map((provider) => (
                 <span key={provider.label} className="overview-tag">
-                  {provider.label} · {formatCompactCount(provider.tokens)}
+                  {provider.label} · {formatCompactCount(provider.tokens, locale, copy)}
                 </span>
               ))}
             </div>
@@ -1090,16 +1066,16 @@ export function OverviewPage() {
         <div className="overview-card">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Quick Actions</div>
-              <div className="overview-card__subtitle">One-click entry points for the most common operator flows.</div>
+              <div className="overview-card__title">{copy.quickActions.title}</div>
+              <div className="overview-card__subtitle">{copy.quickActions.subtitle}</div>
             </div>
           </div>
 
           <div className="overview-actions-grid">
             <button type="button" className="overview-action-tile" onClick={handleCreateSession} disabled={!isConnected}>
               <MessageSquarePlus size={16} />
-              <span>New Session</span>
-              <small>Open chat with a fresh draft conversation.</small>
+              <span>{copy.quickActions.newSession}</span>
+              <small>{copy.quickActions.newSessionDetail}</small>
             </button>
             <button
               type="button"
@@ -1112,18 +1088,18 @@ export function OverviewPage() {
               disabled={!activeConfig?.id}
             >
               <ArrowRightLeft size={16} />
-              <span>Switch Config</span>
-              <small>Reconnect using the selected gateway profile.</small>
+              <span>{copy.quickActions.switchConfig}</span>
+              <small>{copy.quickActions.switchConfigDetail}</small>
             </button>
             <button type="button" className="overview-action-tile" onClick={() => navigate("/logs")}>
               <ScrollText size={16} />
-              <span>View Logs</span>
-              <small>Inspect recent gateway events buffered locally.</small>
+              <span>{copy.quickActions.viewLogs}</span>
+              <small>{copy.quickActions.viewLogsDetail}</small>
             </button>
             <button type="button" className="overview-action-tile" onClick={() => navigate("/settings")}>
               <FileCog size={16} />
-              <span>Open Config</span>
-              <small>Jump to raw gateway config and auth metadata.</small>
+              <span>{copy.quickActions.openConfig}</span>
+              <small>{copy.quickActions.openConfigDetail}</small>
             </button>
           </div>
 
@@ -1148,23 +1124,23 @@ export function OverviewPage() {
               })}
             </div>
           ) : (
-            <div className="overview-empty-inline">No saved gateway profiles yet. Add one from this page or the connection workspace.</div>
+            <div className="overview-empty-inline">{copy.quickActions.noProfiles}</div>
           )}
         </div>
 
         <div className="overview-card">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Alerts & Notifications</div>
-              <div className="overview-card__subtitle">Warnings, auth hints, and operational reminders surfaced from live diagnostics.</div>
+              <div className="overview-card__title">{copy.notifications.title}</div>
+              <div className="overview-card__subtitle">{copy.notifications.subtitle}</div>
             </div>
-            <div className="overview-inline-status">{alerts.length} active</div>
+            <div className="overview-inline-status">{copy.notifications.activeCount(alerts.length)}</div>
           </div>
 
           {alerts.length === 0 ? (
             <div className="overview-empty-inline overview-empty-inline--success">
               <ShieldCheck size={16} />
-              No active alerts. Gateway health, auth, and usage signals look stable.
+              {copy.notifications.empty}
             </div>
           ) : (
             <div className="overview-alert-list" aria-live="polite">
@@ -1186,14 +1162,14 @@ export function OverviewPage() {
         <div className="overview-card">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Recent Activity</div>
-              <div className="overview-card__subtitle">Merged timeline of recent sessions, gateway events, and heartbeat diagnostics.</div>
+              <div className="overview-card__title">{copy.timeline.title}</div>
+              <div className="overview-card__subtitle">{copy.timeline.subtitle}</div>
             </div>
-            <div className="overview-inline-status">{timeline.length} items</div>
+            <div className="overview-inline-status">{copy.timeline.itemCount(timeline.length)}</div>
           </div>
 
           {timeline.length === 0 ? (
-            <div className="overview-empty-inline">No recent activity yet. Connect a gateway and start a session to populate the timeline.</div>
+            <div className="overview-empty-inline">{copy.timeline.empty}</div>
           ) : (
             <div className="overview-timeline">
               {timeline.map((item) => (
@@ -1203,7 +1179,7 @@ export function OverviewPage() {
                     <div className="overview-timeline__title">{item.title}</div>
                     <div className="overview-timeline__detail">{item.detail}</div>
                   </div>
-                  <div className="overview-timeline__time">{formatRelativeTimestamp(item.timestamp)}</div>
+                  <div className="overview-timeline__time">{formatRelativeTimestamp(item.timestamp, locale, copy)}</div>
                 </div>
               ))}
             </div>
@@ -1213,41 +1189,41 @@ export function OverviewPage() {
         <div className="overview-card overview-card--notes">
           <div className="overview-card__header">
             <div>
-              <div className="overview-card__title">Runtime Notes</div>
-              <div className="overview-card__subtitle">Official-style operator reminders plus live desktop diagnostics.</div>
+              <div className="overview-card__title">{copy.notes.title}</div>
+              <div className="overview-card__subtitle">{copy.notes.subtitle}</div>
             </div>
           </div>
 
           <div className="overview-note-grid">
             <div className="overview-note">
-              <div className="overview-note__title">Tailscale serve</div>
-              <div className="overview-muted">Prefer Tailscale Serve to keep the gateway on loopback while preserving device auth and safer exposure.</div>
+              <div className="overview-note__title">{copy.notes.tailscaleTitle}</div>
+              <div className="overview-muted">{copy.notes.tailscaleDetail}</div>
             </div>
             <div className="overview-note">
-              <div className="overview-note__title">Session hygiene</div>
-              <div className="overview-muted">Use a fresh draft session for context resets, or jump to Sessions to patch metadata and defaults.</div>
+              <div className="overview-note__title">{copy.notes.sessionTitle}</div>
+              <div className="overview-muted">{copy.notes.sessionDetail}</div>
             </div>
             <div className="overview-note">
-              <div className="overview-note__title">Cron reminders</div>
-              <div className="overview-muted">Keep recurring tasks isolated from ad-hoc operator chats to preserve deterministic prompts and token accounting.</div>
+              <div className="overview-note__title">{copy.notes.cronTitle}</div>
+              <div className="overview-muted">{copy.notes.cronDetail}</div>
             </div>
           </div>
 
           <div className="overview-runtime-grid">
             <div className="overview-runtime-row">
-              <span><TerminalSquare size={14} /> Runtime</span>
+              <span><TerminalSquare size={14} /> {copy.notes.runtime}</span>
               <strong>{gateway.runtimeContext.clientId}/{gateway.runtimeContext.clientMode}</strong>
             </div>
             <div className="overview-runtime-row">
-              <span><WifiOff size={14} /> Transport</span>
+              <span><WifiOff size={14} /> {copy.notes.transport}</span>
               <strong>{gateway.runtimeContext.socketTransport}</strong>
             </div>
             <div className="overview-runtime-row">
-              <span><ShieldCheck size={14} /> Auth surface</span>
-              <strong>{trustedProxy ? "trusted-proxy" : authMode ?? "token/password"}</strong>
+              <span><ShieldCheck size={14} /> {copy.notes.authSurface}</span>
+              <strong>{trustedProxy ? copy.trustedProxy : authMode ?? copy.tokenPassword}</strong>
             </div>
             <div className="overview-runtime-row">
-              <span><Bot size={14} /> Methods / Events</span>
+              <span><Bot size={14} /> {copy.notes.methodsEvents}</span>
               <strong>{authMethods} / {authEvents}</strong>
             </div>
           </div>
@@ -1258,7 +1234,7 @@ export function OverviewPage() {
                 key={session.key}
                 type="button"
                 className="overview-session-row"
-                title={`${session.title} · ${session.messageCount.toLocaleString()} messages`}
+                title={copy.sessionList.title(session.title, session.messageCount.toLocaleString(locale))}
                 onClick={() => {
                   selectSession(session.key);
                   navigate("/chat");
@@ -1266,9 +1242,9 @@ export function OverviewPage() {
               >
                 <div>
                   <div className="overview-session-row__title">{renderSessionTitle(session)}</div>
-                  <div className="overview-muted">{session.agentId ?? "no agent"} · {session.messageCount.toLocaleString()} messages</div>
+                  <div className="overview-muted">{copy.sessionList.meta(session.agentId ?? copy.noAgent, session.messageCount.toLocaleString(locale))}</div>
                 </div>
-                <div className="overview-session-row__time">{formatRelativeTimestamp(session.updatedAt)}</div>
+                <div className="overview-session-row__time">{formatRelativeTimestamp(session.updatedAt, locale, copy)}</div>
               </button>
             ))}
           </div>

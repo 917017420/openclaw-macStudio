@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Paperclip, Send, Square, X } from "lucide-react";
 import { useChatStore } from "@/features/chat/store";
 import { useChatActions } from "@/features/chat/hooks/useChatActions";
 import { useModels } from "@/features/chat/hooks/useModels";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import type { ChatAttachment } from "@/lib/gateway";
 
 const MAX_HEIGHT = 200;
@@ -11,6 +12,8 @@ const EMPTY_ATTACHMENTS: ChatAttachment[] = [];
 export const MessageComposer = memo(function MessageComposer() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isComposingRef = useRef(false);
+  const compositionUnlockTimerRef = useRef<number | null>(null);
   const selectedSessionId = useChatStore((s) => s.selectedSessionId);
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectedModelId = useChatStore((s) => s.selectedModelId);
@@ -18,8 +21,11 @@ export const MessageComposer = memo(function MessageComposer() {
   const isStreaming = useChatStore((s) => s.isStreaming);
   const setDraft = useChatStore((s) => s.setDraft);
   const setAttachments = useChatStore((s) => s.setAttachments);
+  const removeQueuedMessage = useChatStore((s) => s.removeQueuedMessage);
   const { sendMessage, abortStreaming } = useChatActions();
   const { data: models, isLoading: modelsLoading } = useModels(selectedAgentId);
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
 
   const sessionDraft = useChatStore((s) =>
     selectedSessionId ? s.draftBySession[selectedSessionId] : undefined,
@@ -29,6 +35,11 @@ export const MessageComposer = memo(function MessageComposer() {
   const sessionKey = selectedSessionId ?? (selectedAgentId ? `agent:${selectedAgentId}:main` : null);
   const attachments = useChatStore((s) =>
     sessionKey ? s.attachmentsBySession[sessionKey] ?? EMPTY_ATTACHMENTS : EMPTY_ATTACHMENTS,
+  );
+  const chatQueue = useChatStore((s) => s.chatQueue);
+  const queuedItems = useMemo(
+    () => (sessionKey ? chatQueue.filter((item) => item.sessionKey === sessionKey) : []),
+    [chatQueue, sessionKey],
   );
 
   const appendAttachments = useCallback(async (files: FileList | File[]) => {
@@ -79,7 +90,7 @@ export const MessageComposer = memo(function MessageComposer() {
   );
 
   const doSend = useCallback(() => {
-    if ((!draft.trim() && attachments.length === 0) || isStreaming) return;
+    if (!draft.trim() && attachments.length === 0) return;
     sendMessage(draft, attachments);
     if (selectedSessionId) {
       setDraft(selectedSessionId, "");
@@ -89,21 +100,47 @@ export const MessageComposer = memo(function MessageComposer() {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [attachments, draft, isStreaming, sendMessage, selectedSessionId, setDraft]);
+  }, [attachments, draft, sendMessage, selectedSessionId, setDraft]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        doSend();
-      }
+      if (e.key !== "Enter" || e.shiftKey) return;
+      const nativeEvent = e.nativeEvent as KeyboardEvent | undefined;
+      const keyCode = nativeEvent?.keyCode ?? ("keyCode" in e ? Number(e.keyCode) : undefined);
+      if (isComposingRef.current || e.isComposing || nativeEvent?.isComposing || keyCode === 229) return;
+      e.preventDefault();
+      doSend();
     },
     [doSend],
   );
 
+  const handleCompositionStart = useCallback(() => {
+    if (compositionUnlockTimerRef.current != null) {
+      window.clearTimeout(compositionUnlockTimerRef.current);
+      compositionUnlockTimerRef.current = null;
+    }
+    isComposingRef.current = true;
+  }, []);
+
+  const handleCompositionEnd = useCallback(() => {
+    if (compositionUnlockTimerRef.current != null) {
+      window.clearTimeout(compositionUnlockTimerRef.current);
+    }
+    compositionUnlockTimerRef.current = window.setTimeout(() => {
+      isComposingRef.current = false;
+      compositionUnlockTimerRef.current = null;
+    }, 0);
+  }, []);
+
   useEffect(() => {
     textareaRef.current?.focus();
   }, [selectedSessionId]);
+
+  useEffect(() => () => {
+    if (compositionUnlockTimerRef.current != null) {
+      window.clearTimeout(compositionUnlockTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!models || models.length === 0) {
@@ -127,15 +164,15 @@ export const MessageComposer = memo(function MessageComposer() {
     <div className="chat-compose">
       <div className="chat-compose__inner">
         {attachments.length > 0 ? (
-          <div className="chat-attachments" aria-label={`Attached images: ${attachments.length}`}>
+          <div className="chat-attachments" aria-label={isChinese ? `已附加图片：${attachments.length}` : `Attached images: ${attachments.length}`}>
             {attachments.map((attachment) => (
               <div key={attachment.id} className="chat-attachment">
-                <img src={attachment.dataUrl} alt={attachment.alt ?? "Attachment"} className="chat-attachment__img" />
+                <img src={attachment.dataUrl} alt={attachment.alt ?? (isChinese ? "附件" : "Attachment")} className="chat-attachment__img" />
                 <button
                   type="button"
                   className="chat-attachment__remove"
                   onClick={() => removeAttachment(attachment.id)}
-                  aria-label={`Remove ${attachment.alt ?? "attachment"}`}
+                  aria-label={isChinese ? `移除${attachment.alt ?? "附件"}` : `Remove ${attachment.alt ?? "attachment"}`}
                 >
                   <X size={12} />
                 </button>
@@ -148,12 +185,12 @@ export const MessageComposer = memo(function MessageComposer() {
           <select
             value={selectedModelId ?? ""}
             onChange={(e) => setSelectedModel(e.target.value || null)}
-            disabled={disabled || isStreaming}
+            disabled={disabled}
             className="composer-model"
-            title="Choose model"
-            aria-label="Choose model"
+            title={isChinese ? "选择模型" : "Choose model"}
+            aria-label={isChinese ? "选择模型" : "Choose model"}
           >
-            <option value="">{modelsLoading ? "加载模型中..." : "Auto"}</option>
+            <option value="">{modelsLoading ? (isChinese ? "加载模型中..." : "Loading models...") : isChinese ? "自动" : "Auto"}</option>
             {(models ?? []).map((model) => (
               <option key={model.id} value={model.id}>
                 {model.provider ? `${model.provider} / ${model.label}` : model.label}
@@ -167,6 +204,8 @@ export const MessageComposer = memo(function MessageComposer() {
             value={draft}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             onPaste={(event) => {
               const items = event.clipboardData?.items;
               if (!items) return;
@@ -181,13 +220,13 @@ export const MessageComposer = memo(function MessageComposer() {
             className="composer-input"
             style={{ maxHeight: MAX_HEIGHT }}
             disabled={disabled}
-            aria-label="Message"
+            aria-label={isChinese ? "消息输入框" : "Message"}
             placeholder={
               disabled
-                ? "连接并选择 agent 后开始聊天"
+                ? (isChinese ? "连接并选择 Agent 后开始聊天" : "Connect and choose an agent to start chatting")
                 : attachments.length > 0
-                  ? "Add a message or paste more images…"
-                  : "Message (Enter 发送，Shift+Enter 换行，支持粘贴图片)"
+                  ? (isChinese ? "输入消息或继续粘贴图片…" : "Add a message or paste more images…")
+                  : (isChinese ? "输入消息（中文选词时回车不会发送，Shift+Enter 换行，支持粘贴图片）" : "Message (IME Enter will not send, Shift+Enter for newline, supports pasted images)")
             }
           />
 
@@ -210,24 +249,62 @@ export const MessageComposer = memo(function MessageComposer() {
             type="button"
             className="composer-btn"
             onClick={() => fileInputRef.current?.click()}
-            disabled={disabled || isStreaming}
-            title="Attach images"
-            aria-label="Attach images"
+            disabled={disabled}
+            title={isChinese ? "附加图片" : "Attach images"}
+            aria-label={isChinese ? "附加图片" : "Attach images"}
           >
             <Paperclip size={15} />
           </button>
 
+          {isStreaming ? (
+            <button
+              type="button"
+              onClick={abortStreaming}
+              disabled={disabled}
+              className="composer-btn"
+              title={isChinese ? "停止生成" : "Stop generating"}
+              aria-label={isChinese ? "停止生成" : "Stop generating"}
+            >
+              <Square size={15} />
+            </button>
+          ) : null}
+
           <button
             type="button"
-            onClick={isStreaming ? abortStreaming : doSend}
-            disabled={disabled || (!isStreaming && !draft.trim() && attachments.length === 0)}
+            onClick={doSend}
+            disabled={disabled || (!draft.trim() && attachments.length === 0)}
             className="composer-btn primary"
-            title={isStreaming ? "Stop generating" : "Send message"}
-            aria-label={isStreaming ? "Stop generating" : "Send message"}
+            title={isStreaming ? (isChinese ? "加入队列" : "Queue message") : isChinese ? "发送消息" : "Send message"}
+            aria-label={isStreaming ? (isChinese ? "加入队列" : "Queue message") : isChinese ? "发送消息" : "Send message"}
           >
-            {isStreaming ? <Square size={15} /> : <Send size={15} />}
+            <Send size={15} />
+            <span>{isStreaming ? (isChinese ? "排队发送" : "Queue") : isChinese ? "发送" : "Send"}</span>
           </button>
         </div>
+
+        {queuedItems.length > 0 ? (
+          <div className="chat-queue" role="status" aria-live="polite">
+            <div className="chat-queue__title">{isChinese ? `队列中（${queuedItems.length}）` : `Queued (${queuedItems.length})`}</div>
+            <div className="chat-queue__list">
+              {queuedItems.map((item) => (
+                <div key={item.id} className="chat-queue__item">
+                  <div className="chat-queue__text">
+                    {item.text || (item.attachments.length > 0 ? (isChinese ? `图片（${item.attachments.length}）` : `Image (${item.attachments.length})`) : "")}
+                  </div>
+                  <button
+                    type="button"
+                    className="composer-btn chat-queue__remove"
+                    onClick={() => removeQueuedMessage(item.id)}
+                    aria-label={isChinese ? "移除排队消息" : "Remove queued message"}
+                    title={isChinese ? "移除排队消息" : "Remove queued message"}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

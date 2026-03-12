@@ -109,9 +109,12 @@ function dataUrlToAttachmentPayload(dataUrl: string): { mimeType: string; conten
 export function useChatActions() {
   const queryClient = useQueryClient();
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastQueueFailureRef = useRef<{ id: string; at: number } | null>(null);
   const sessionModelPatchModeRef = useRef<"unknown" | "model" | "modelId" | "unsupported">(
     "unknown",
   );
+  const isStreaming = useChatStore((s) => s.isStreaming);
+  const queuedCount = useChatStore((s) => s.chatQueue.length);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
@@ -288,38 +291,37 @@ export function useChatActions() {
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
-  const sendMessage = useCallback(
-    async (content: string, attachments: ChatAttachment[] = []) => {
+  const performSendMessage = useCallback(
+    async (params: {
+      agentId: string;
+      sessionKey: string;
+      selectedModelId: string | null;
+      content: string;
+      attachments: ChatAttachment[];
+    }) => {
       const {
-        selectedAgentId,
-        selectedSessionId,
-        selectedModelId,
         addMessage,
         clearToolMessages,
         closeSidebar,
         markSessionSent,
-        setDraft,
-        setAttachments,
         setCompactionStatus,
         setFallbackStatus,
         selectSession,
         startStreaming,
       } = useChatStore.getState();
 
-      if (!selectedAgentId) return;
-      const trimmed = content.trim();
-      if (!trimmed && attachments.length === 0) return;
-
-      const sessionKey = selectedSessionId ?? `agent:${selectedAgentId}:main`;
-      if (!selectedSessionId) {
-        selectSession(sessionKey);
+      const trimmed = params.content.trim();
+      if (!trimmed && params.attachments.length === 0) {
+        return { ok: false as const };
       }
+
+      selectSession(params.sessionKey);
 
       const userContentBlocks: Array<Record<string, unknown>> = [];
       if (trimmed) {
         userContentBlocks.push({ type: "text", text: trimmed });
       }
-      for (const attachment of attachments) {
+      for (const attachment of params.attachments) {
         userContentBlocks.push({
           type: "image",
           source: {
@@ -331,20 +333,18 @@ export function useChatActions() {
       }
 
       const userMessage = createUserMessage(trimmed, {
-        attachments,
+        attachments: params.attachments,
         raw: {
           role: "user",
           content: userContentBlocks,
           timestamp: Date.now(),
         },
       });
-      markSessionSent(sessionKey, userMessage.timestamp);
-      addMessage(sessionKey, userMessage);
-      setDraft(sessionKey, "");
-      setAttachments(sessionKey, []);
-      clearToolMessages(sessionKey);
-      setCompactionStatus(sessionKey, null);
-      setFallbackStatus(sessionKey, null);
+      markSessionSent(params.sessionKey, userMessage.timestamp);
+      addMessage(params.sessionKey, userMessage);
+      clearToolMessages(params.sessionKey);
+      setCompactionStatus(params.sessionKey, null);
+      setFallbackStatus(params.sessionKey, null);
       closeSidebar();
 
       const runId = uid();
@@ -353,15 +353,15 @@ export function useChatActions() {
         timestamp: userMessage.timestamp + 1,
         isStreaming: true,
       });
-      addMessage(sessionKey, pendingAssistant);
-      startStreaming(sessionKey, pendingAssistant.id, runId);
+      addMessage(params.sessionKey, pendingAssistant);
+      startStreaming(params.sessionKey, pendingAssistant.id, runId);
 
-      const params: Record<string, unknown> = {
-        sessionKey,
+      const requestParams: Record<string, unknown> = {
+        sessionKey: params.sessionKey,
         message: trimmed,
         idempotencyKey: runId,
       };
-      const apiAttachments = attachments
+      const apiAttachments = params.attachments
         .map((attachment) => dataUrlToAttachmentPayload(attachment.dataUrl))
         .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null)
         .map((attachment) => ({
@@ -370,26 +370,26 @@ export function useChatActions() {
           content: attachment.content,
         }));
       if (apiAttachments.length > 0) {
-        params.attachments = apiAttachments;
+        requestParams.attachments = apiAttachments;
       }
 
       try {
-        if (selectedModelId) {
+        if (params.selectedModelId) {
           try {
-            await applySessionModel(sessionKey, selectedModelId);
+            await applySessionModel(params.sessionKey, params.selectedModelId);
           } catch (error) {
             console.warn("[useChatActions] sessions.patch model failed:", error);
           }
         }
 
-        const res = await requestChatSend(params);
+        const res = await requestChatSend(requestParams);
         const { sessionKey: responseSessionKey, sessionId: responseSessionId } =
           extractSessionIdentity(res);
         const rawReturnedSession = responseSessionKey ?? responseSessionId;
 
         const effectiveSessionKey = rawReturnedSession
-          ? normalizeSessionKeyForRpc(rawReturnedSession, selectedAgentId, sessionKey)
-          : sessionKey;
+          ? normalizeSessionKeyForRpc(rawReturnedSession, params.agentId, params.sessionKey)
+          : params.sessionKey;
 
         const state = useChatStore.getState();
         if (responseSessionId) {
@@ -403,8 +403,8 @@ export function useChatActions() {
           state.mapSession(responseSessionKey, effectiveSessionKey);
         }
 
-        if (effectiveSessionKey !== sessionKey) {
-          const source = state.messagesBySession[sessionKey] ?? [];
+        if (effectiveSessionKey !== params.sessionKey) {
+          const source = state.messagesBySession[params.sessionKey] ?? [];
           const target = state.messagesBySession[effectiveSessionKey] ?? [];
           const merged = [...target];
           for (const msg of source) {
@@ -413,15 +413,16 @@ export function useChatActions() {
             }
           }
           state.setMessages(effectiveSessionKey, merged);
-          state.clearSession(sessionKey);
-          if (state.streamingSessionKey === sessionKey) {
+          state.remapQueuedSession(params.sessionKey, effectiveSessionKey);
+          state.clearSession(params.sessionKey);
+          if (state.streamingSessionKey === params.sessionKey) {
             useChatStore.setState({ streamingSessionKey: effectiveSessionKey });
           }
         }
 
         state.selectSession(effectiveSessionKey);
         queryClient.invalidateQueries({
-          queryKey: sessionsQueryKey(selectedAgentId),
+          queryKey: sessionsQueryKey(params.agentId),
         });
 
         const currentState = useChatStore.getState();
@@ -429,8 +430,8 @@ export function useChatActions() {
         const count = effectiveMessages.some((message) => message.id === pendingAssistant.id)
           ? Math.max(0, effectiveMessages.length - 1)
           : effectiveMessages.length;
-        // Start polling immediately to reduce final-message display latency.
         pollForResponse(effectiveSessionKey, count);
+        return { ok: true as const };
       } catch (error) {
         console.error("[useChatActions] sendMessage failed:", error);
         const state = useChatStore.getState();
@@ -438,12 +439,97 @@ export function useChatActions() {
           state.stopStreaming();
         }
         state.addMessage(
-          sessionKey,
-          createSystemMessage(`Send failed: ${error instanceof Error ? error.message : String(error)}`),
+          params.sessionKey,
+          createSystemMessage(
+            `Send failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
         );
+        return { ok: false as const };
       }
     },
     [pollForResponse, queryClient],
+  );
+
+  const flushQueuedMessages = useCallback(async () => {
+    const state = useChatStore.getState();
+    if (state.isStreaming || state.chatQueue.length === 0) {
+      return;
+    }
+    const next = state.chatQueue[0];
+    if (!next) {
+      return;
+    }
+    const lastFailed = lastQueueFailureRef.current;
+    if (lastFailed && lastFailed.id === next.id && Date.now() - lastFailed.at < 3_000) {
+      return;
+    }
+    state.removeQueuedMessage(next.id);
+    const result = await performSendMessage({
+      agentId: next.agentId,
+      sessionKey: next.sessionKey,
+      selectedModelId: next.modelId,
+      content: next.text,
+      attachments: next.attachments,
+    });
+    if (!result.ok) {
+      lastQueueFailureRef.current = { id: next.id, at: Date.now() };
+      useChatStore.getState().prependQueuedMessage(next);
+      return;
+    }
+    lastQueueFailureRef.current = null;
+  }, [performSendMessage]);
+
+  useEffect(() => {
+    if (!isStreaming && queuedCount > 0) {
+      void flushQueuedMessages();
+    }
+  }, [flushQueuedMessages, isStreaming, queuedCount]);
+
+  const sendMessage = useCallback(
+    async (content: string, attachments: ChatAttachment[] = []) => {
+      const {
+        selectedAgentId,
+        selectedSessionId,
+        selectedModelId,
+        setDraft,
+        setAttachments,
+        selectSession,
+        enqueueQueuedMessage,
+      } = useChatStore.getState();
+
+      if (!selectedAgentId) return;
+      const trimmed = content.trim();
+      if (!trimmed && attachments.length === 0) return;
+
+      const sessionKey = selectedSessionId ?? `agent:${selectedAgentId}:main`;
+      if (!selectedSessionId) {
+        selectSession(sessionKey);
+      }
+      setDraft(sessionKey, "");
+      setAttachments(sessionKey, []);
+
+      if (useChatStore.getState().isStreaming) {
+        enqueueQueuedMessage({
+          id: uid(),
+          sessionKey,
+          agentId: selectedAgentId,
+          modelId: selectedModelId,
+          text: trimmed,
+          createdAt: Date.now(),
+          attachments,
+        });
+        return;
+      }
+
+      await performSendMessage({
+        agentId: selectedAgentId,
+        sessionKey,
+        selectedModelId,
+        content: trimmed,
+        attachments,
+      });
+    },
+    [performSendMessage],
   );
 
   const abortStreaming = useCallback(async () => {

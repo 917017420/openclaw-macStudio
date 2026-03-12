@@ -18,6 +18,8 @@ import { UsagePage } from "@/features/usage";
 import { CronPage } from "@/features/cron";
 import { useGateway } from "@/features/connection/hooks/useGateway";
 import { useChatPersistence } from "@/features/chat/hooks/useChatPersistence";
+import { useAppPreferencesStore } from "@/features/preferences/store";
+import { useEffect } from "react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +36,15 @@ function AppBootstrap() {
   useGateway();
   // Persist and restore chat snapshots locally.
   useChatPersistence();
+  const language = useAppPreferencesStore((store) => store.language);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.documentElement.lang = language;
+  }, [language]);
+
   return null;
 }
 

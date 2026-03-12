@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, Wrench } from "lucide-react";
 import { Button, Card } from "@/components/ui";
 import { useConnectionStore } from "@/features/connection/store";
+import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
 
 type SkillInstallOption = {
@@ -126,6 +127,71 @@ function computeSkillReasons(skill: SkillStatusEntry) {
 export function SkillsPage() {
   const state = useConnectionStore((store) => store.state);
   const isConnected = state === "connected";
+  const language = useAppPreferencesStore((store) => store.language);
+  const isChinese = isChineseLanguage(language);
+  const copy = isChinese
+    ? {
+        title: "技能",
+        emptySubtitle: "先连接网关，再查看、安装和配置工作区技能。",
+        subtitle: "基于网关的工作区技能目录，支持启停、安装和 API Key 操作。",
+        refresh: "刷新",
+        report: "工作区技能报告",
+        waiting: "等待工作区元数据",
+        filter: "筛选",
+        filterPlaceholder: "按名称、来源或 key 搜索技能",
+        shown: "显示中",
+        shownDetail: "匹配当前筛选条件的技能数。",
+        noMatch: "当前筛选条件下没有匹配的技能。",
+        skillsCount: (count: number) => `${count} 个技能`,
+        enable: "启用",
+        disable: "停用",
+        installing: "安装中…",
+        eligible: "可用",
+        blocked: "受阻",
+        bundled: "内置",
+        disabled: "已停用",
+        always: "常驻",
+        missing: "缺失",
+        reason: "原因",
+        path: "路径",
+        requirements: "依赖要求",
+        noRequirements: "没有额外依赖",
+        install: "安装",
+        noInstall: "没有上报安装动作",
+        enterKey: (key: string) => `输入 ${key}`,
+        saveKey: "保存 Key",
+      }
+    : {
+        title: "Skills",
+        emptySubtitle: "Connect a gateway to inspect, install, and configure workspace skills.",
+        subtitle: "Gateway-backed workspace skill catalog with enable/disable, install, and API key actions.",
+        refresh: "Refresh",
+        report: "Workspace Skill Report",
+        waiting: "Waiting for workspace metadata",
+        filter: "Filter",
+        filterPlaceholder: "Search skills by name, source, or key",
+        shown: "Shown",
+        shownDetail: "Skills matching the current filter.",
+        noMatch: "No skills matched the current filter.",
+        skillsCount: (count: number) => `${count} skills`,
+        enable: "Enable",
+        disable: "Disable",
+        installing: "Installing…",
+        eligible: "eligible",
+        blocked: "blocked",
+        bundled: "bundled",
+        disabled: "disabled",
+        always: "always",
+        missing: "Missing",
+        reason: "Reason",
+        path: "Path",
+        requirements: "Requirements",
+        noRequirements: "No extra requirements",
+        install: "Install",
+        noInstall: "No install actions reported",
+        enterKey: (key: string) => `Enter ${key}`,
+        saveKey: "Save key",
+      };
   const [filter, setFilter] = useState("");
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -223,8 +289,8 @@ export function SkillsPage() {
     return (
       <div className="workspace-empty-state">
         <Wrench size={40} className="text-text-tertiary" />
-        <h2 className="workspace-title">Skills</h2>
-        <p className="workspace-subtitle">Connect a gateway to inspect, install, and configure workspace skills.</p>
+        <h2 className="workspace-title">{copy.title}</h2>
+        <p className="workspace-subtitle">{copy.emptySubtitle}</p>
       </div>
     );
   }
@@ -233,13 +299,13 @@ export function SkillsPage() {
     <div className="workspace-page">
       <div className="workspace-toolbar">
         <div>
-          <h2 className="workspace-title">Skills</h2>
-          <p className="workspace-subtitle">Gateway-backed workspace skill catalog with enable/disable, install, and API key actions.</p>
+          <h2 className="workspace-title">{copy.title}</h2>
+          <p className="workspace-subtitle">{copy.subtitle}</p>
         </div>
         <div className="workspace-toolbar__actions">
           <Button variant="secondary" onClick={() => refreshSkills(true)} loading={skillsQuery.isFetching}>
             <RefreshCw size={14} />
-            Refresh
+            {copy.refresh}
           </Button>
         </div>
       </div>
@@ -249,26 +315,26 @@ export function SkillsPage() {
       <Card className="workspace-section">
         <div className="workspace-section__header">
           <div>
-            <h3>Workspace Skill Report</h3>
-            <p>{skillsQuery.data?.workspaceDir || "Waiting for workspace metadata"}</p>
+            <h3>{copy.report}</h3>
+            <p>{skillsQuery.data?.workspaceDir || copy.waiting}</p>
           </div>
           {skillsQuery.data?.managedSkillsDir && <span className="workspace-meta mono">{skillsQuery.data.managedSkillsDir}</span>}
         </div>
 
         <div className="session-filters session-filters--logs">
           <label className="session-field">
-            <span>Filter</span>
-            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Search skills by name, source, or key" />
+            <span>{copy.filter}</span>
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={copy.filterPlaceholder} />
           </label>
           <div className="stat-card stat-card--compact">
-            <div className="stat-card__label">Shown</div>
+            <div className="stat-card__label">{copy.shown}</div>
             <div className="stat-card__value">{filteredSkills.length}</div>
-            <div className="workspace-subcopy">Skills matching the current filter.</div>
+            <div className="workspace-subcopy">{copy.shownDetail}</div>
           </div>
         </div>
 
         {groups.length === 0 ? (
-          <div className="workspace-empty-inline">No skills matched the current filter.</div>
+          <div className="workspace-empty-inline">{copy.noMatch}</div>
         ) : (
           <div className="skill-groups">
             {groups.map((group) => (
@@ -276,7 +342,7 @@ export function SkillsPage() {
                 <div className="workspace-section__header skill-group__header">
                   <div>
                     <h3>{group.label}</h3>
-                    <p>{group.skills.length} skills</p>
+                    <p>{copy.skillsCount(group.skills.length)}</p>
                   </div>
                 </div>
 
@@ -297,11 +363,11 @@ export function SkillsPage() {
                           </div>
                           <div className="workspace-toolbar__actions">
                             <Button variant="secondary" size="sm" disabled={busy || skill.always} onClick={() => updateSkillEnabled(skill.skillKey, skill.disabled)}>
-                              {skill.disabled ? "Enable" : "Disable"}
+                              {skill.disabled ? copy.enable : copy.disable}
                             </Button>
                             {installTarget && missing.some((item) => item.startsWith("bin:")) && (
                               <Button size="sm" disabled={busy} onClick={() => installSkill(skill)}>
-                                {busy ? "Installing…" : installTarget.label}
+                                {busy ? copy.installing : installTarget.label}
                               </Button>
                             )}
                           </div>
@@ -309,27 +375,27 @@ export function SkillsPage() {
 
                         <div className="detail-pills">
                           <span className="detail-pill">{skill.source}</span>
-                          <span className={`detail-pill ${skill.eligible ? "detail-pill--ok" : "detail-pill--warn"}`}>{skill.eligible ? "eligible" : "blocked"}</span>
-                          {skill.bundled && <span className="detail-pill">bundled</span>}
-                          {skill.disabled && <span className="detail-pill detail-pill--warn">disabled</span>}
-                          {skill.always && <span className="detail-pill">always</span>}
+                          <span className={`detail-pill ${skill.eligible ? "detail-pill--ok" : "detail-pill--warn"}`}>{skill.eligible ? copy.eligible : copy.blocked}</span>
+                          {skill.bundled && <span className="detail-pill">{copy.bundled}</span>}
+                          {skill.disabled && <span className="detail-pill detail-pill--warn">{copy.disabled}</span>}
+                          {skill.always && <span className="detail-pill">{copy.always}</span>}
                         </div>
 
-                        {missing.length > 0 && <div className="workspace-subcopy">Missing: {missing.join(", ")}</div>}
-                        {reasons.length > 0 && <div className="workspace-subcopy">Reason: {reasons.join(", ")}</div>}
+                        {missing.length > 0 && <div className="workspace-subcopy">{copy.missing}: {missing.join(", ")}</div>}
+                        {reasons.length > 0 && <div className="workspace-subcopy">{copy.reason}: {reasons.join(", ")}</div>}
 
                         <div className="detail-columns skill-detail-columns">
                           <div>
-                            <h4>Path</h4>
+                            <h4>{copy.path}</h4>
                             <p>{skill.filePath}</p>
                           </div>
                           <div>
-                            <h4>Requirements</h4>
-                            <p>{[...skill.requirements.bins, ...skill.requirements.env, ...skill.requirements.config].join(", ") || "No extra requirements"}</p>
+                            <h4>{copy.requirements}</h4>
+                            <p>{[...skill.requirements.bins, ...skill.requirements.env, ...skill.requirements.config].join(", ") || copy.noRequirements}</p>
                           </div>
                           <div>
-                            <h4>Install</h4>
-                            <p>{skill.install.map((item) => item.label).join(", ") || "No install actions reported"}</p>
+                            <h4>{copy.install}</h4>
+                            <p>{skill.install.map((item) => item.label).join(", ") || copy.noInstall}</p>
                           </div>
                         </div>
 
@@ -341,11 +407,11 @@ export function SkillsPage() {
                                 type="password"
                                 value={edits[skill.skillKey] ?? ""}
                                 onChange={(event) => setEdits((current) => ({ ...current, [skill.skillKey]: event.target.value }))}
-                                placeholder={`Enter ${skill.primaryEnv}`}
+                                placeholder={copy.enterKey(skill.primaryEnv)}
                               />
                             </label>
                             <Button size="sm" disabled={busy} onClick={() => saveSkillApiKey(skill.skillKey)}>
-                              Save key
+                              {copy.saveKey}
                             </Button>
                           </div>
                         )}
