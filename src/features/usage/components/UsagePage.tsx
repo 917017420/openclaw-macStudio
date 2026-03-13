@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, RefreshCw } from "lucide-react";
 import { Button, Card } from "@/components/ui";
@@ -19,6 +19,7 @@ import {
   buildUsageInsightStats,
   computeFilteredUsageFromTimeSeries,
   computeSessionValue,
+  charsToTokens,
   createDefaultDateRange,
   createEmptyTotals,
   downloadTextFile,
@@ -39,6 +40,7 @@ import {
   normalizeSessionsUsageResult,
   normalizeTimeSeries,
   parseToolSummary,
+  pct,
   removeQueryToken,
   sessionTouchesHours,
   setQueryTokensForKey,
@@ -59,14 +61,44 @@ function formatDisplayValue(value: number, mode: "tokens" | "cost") {
   return mode === "tokens" ? formatTokens(value) : formatCost(value);
 }
 
-function useShiftToggle<T>(value: T, selected: T[], shiftKey: boolean) {
-  if (shiftKey) {
-    return toggleListItem(selected, value);
+function selectContiguousRange<T>(items: T[], selected: T[], value: T, shiftKey: boolean) {
+  if (shiftKey && selected.length > 0) {
+    const anchor = selected[selected.length - 1];
+    const anchorIndex = items.findIndex((item) => Object.is(item, anchor));
+    const valueIndex = items.findIndex((item) => Object.is(item, value));
+    if (anchorIndex !== -1 && valueIndex !== -1) {
+      const [start, end] = anchorIndex < valueIndex ? [anchorIndex, valueIndex] : [valueIndex, anchorIndex];
+      return items.slice(start, end + 1);
+    }
   }
-  if (selected.length === 1 && selected[0] === value) {
+  if (selected.length === 1 && Object.is(selected[0], value)) {
     return [];
   }
   return [value];
+}
+
+function getSessionDisplayLabel(session: SessionUsageEntry) {
+  const raw = session.label?.trim() || session.key;
+  if (raw.startsWith("agent:") && raw.includes("?token=")) {
+    return raw.slice(0, raw.indexOf("?token="));
+  }
+  return raw;
+}
+
+async function copyTextToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.setAttribute("readonly", "");
+    input.style.position = "absolute";
+    input.style.left = "-9999px";
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    document.body.removeChild(input);
+  }
 }
 
 async function loadUsageSnapshot(params: {
@@ -174,15 +206,39 @@ function buildCostBreakdown(totals: UsageTotals, mode: "tokens" | "cost") {
 }
 
 function buildTimeSeriesView(points: SessionUsageTimePoint[], mode: "cumulative" | "per-turn") {
+  let cumulativeTokens = 0;
+  let cumulativeCost = 0;
   return points.map((point) => ({
+    cumulativeTokens: (cumulativeTokens += point.totalTokens),
+    cumulativeCost: (cumulativeCost += point.cost),
     timestamp: point.timestamp,
-    totalTokens: mode === "cumulative" ? point.cumulativeTokens : point.totalTokens,
-    totalCost: mode === "cumulative" ? point.cumulativeCost : point.cost,
+    totalTokens: mode === "cumulative" ? cumulativeTokens : point.totalTokens,
+    totalCost: mode === "cumulative" ? cumulativeCost : point.cost,
     input: point.input,
     output: point.output,
     cacheRead: point.cacheRead,
     cacheWrite: point.cacheWrite,
   }));
+}
+
+function filterTimeSeriesPointsByScope(
+  points: SessionUsageTimePoint[],
+  startDate: string,
+  endDate: string,
+  selectedDays: string[],
+) {
+  const startTimestamp = new Date(`${startDate}T00:00:00`).getTime();
+  const endTimestamp = new Date(`${endDate}T23:59:59.999`).getTime();
+  return points.filter((point) => {
+    const timestamp = point.timestamp < 1e12 ? point.timestamp * 1000 : point.timestamp;
+    if (timestamp < startTimestamp || timestamp > endTimestamp) {
+      return false;
+    }
+    if (selectedDays.length === 0) {
+      return true;
+    }
+    return selectedDays.includes(formatIsoDate(new Date(timestamp)));
+  });
 }
 
 export function UsagePage() {
@@ -270,33 +326,47 @@ export function UsagePage() {
         descending: "降序",
         ascending: "升序",
         clearSelection: "清除选择",
+        copy: "复制",
+        copySessionName: "复制会话名",
+        selectedCount: (count: number) => `已选 (${count})`,
         moreCount: (count: number) => `还有 ${count} 条`,
         noRecentSessions: "还没有最近查看的会话",
         noSessionsInRange: "当前范围没有会话",
         sessionDetail: "会话详情",
         filteredRange: "已筛选范围",
+        selectedRange: "已选范围",
         close: "关闭",
         cumulative: "累计",
         perTurn: "按轮次",
         loadingTimeSeries: "正在加载时间序列…",
-        rangeLabel: (start: string, end: string) => `范围：${start} -> ${end}`,
+        rangeLabel: (start: string, end: string) => `范围 ${start} → ${end}`,
+        rangeSummary: (count: number, label: string, value: string) => `已选 ${count} 个点 · ${label}：${value}`,
         clickBarHint: "点击柱子设置范围，按住 Shift 可扩展。",
         clearRange: "清除范围",
         noTimeSeries: "当前会话没有可用时间序列。",
+        noTimeSeriesInRange: "当前可见范围内没有时间序列数据。清除按天筛选或扩大日期范围后重试。",
+        activeDayFilters: (count: number) => `当前启用了 ${count} 个按天筛选。`,
         contextAndTools: "上下文与工具",
         system: "系统",
         skills: "技能",
         files: "文件",
         collapse: "收起",
+        collapseAll: "全部收起",
         expandAll: "展开全部",
         noContext: "没有可用的上下文数据。",
+        contextEstimate: "上下文估算",
+        contextPctOfInput: (value: string) => `约占输入的 ${value}`,
+        baseContextPerMessage: "每条消息的基础上下文",
         sessionLogs: "会话日志",
         rowsStatus: (count: number, refreshing: boolean) => `${count} 行，${refreshing ? "刷新中" : "已就绪"}`,
+        logCount: (shown: number, total: number, timelineFiltered: boolean) =>
+          `${shown}/${total} 条消息${timelineFiltered ? "（时间线已筛选）" : ""}`,
         hasTools: "包含工具",
         searchLogs: "搜索日志",
         clearFilters: "清除筛选",
         loadingLogs: "正在加载会话日志…",
         noSessionLogs: "没有返回会话日志。",
+        noFilteredLogs: "没有消息匹配当前筛选。",
         selectSessionDetail: "选择一个会话以查看详情。",
         avgLabel: "平均",
         costSort: "成本",
@@ -383,33 +453,47 @@ export function UsagePage() {
         descending: "Descending",
         ascending: "Ascending",
         clearSelection: "Clear Selection",
+        copy: "Copy",
+        copySessionName: "Copy session name",
+        selectedCount: (count: number) => `Selected (${count})`,
         moreCount: (count: number) => `+${count} more`,
         noRecentSessions: "No recent sessions yet",
         noSessionsInRange: "No sessions in this range",
         sessionDetail: "Session Detail",
         filteredRange: "Filtered range",
+        selectedRange: "Selected range",
         close: "Close",
         cumulative: "Cumulative",
         perTurn: "Per turn",
         loadingTimeSeries: "Loading time series...",
-        rangeLabel: (start: string, end: string) => `Range: ${start} -> ${end}`,
+        rangeLabel: (start: string, end: string) => `Range ${start} → ${end}`,
+        rangeSummary: (count: number, label: string, value: string) => `Selected ${count} points · ${label}: ${value}`,
         clickBarHint: "Click a bar to set range. Shift-click to extend.",
         clearRange: "Clear range",
         noTimeSeries: "No time series data available for this session.",
+        noTimeSeriesInRange: "No time series data in the current visible range. Clear day filters or widen the date range and try again.",
+        activeDayFilters: (count: number) => `${count} day filters are active.`,
         contextAndTools: "Context & Tools",
         system: "System",
         skills: "Skills",
         files: "Files",
         collapse: "Collapse",
+        collapseAll: "Collapse all",
         expandAll: "Expand all",
         noContext: "No context data available.",
+        contextEstimate: "Context estimate",
+        contextPctOfInput: (value: string) => `~${value} of input`,
+        baseContextPerMessage: "Base context per message",
         sessionLogs: "Session Logs",
         rowsStatus: (count: number, refreshing: boolean) => `${count} rows - ${refreshing ? "Refreshing" : "Ready"}`,
+        logCount: (shown: number, total: number, timelineFiltered: boolean) =>
+          `${shown} of ${total}${timelineFiltered ? " (timeline filtered)" : ""} messages`,
         hasTools: "Has tools",
         searchLogs: "Search logs",
         clearFilters: "Clear filters",
         loadingLogs: "Loading session logs...",
         noSessionLogs: "No session logs were returned.",
+        noFilteredLogs: "No messages match the current filters.",
         selectSessionDetail: "Select a session to inspect details.",
         avgLabel: "Avg",
         costSort: "Cost",
@@ -424,16 +508,16 @@ export function UsagePage() {
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
   const [selectedHours, setSelectedHours] = useState<number[]>([]);
   const [chartMode, setChartMode] = useState<"tokens" | "cost">("tokens");
-  const [dailyChartMode, setDailyChartMode] = useState<"total" | "by-type">("total");
-  const [timeSeriesMode, setTimeSeriesMode] = useState<"cumulative" | "per-turn">("cumulative");
+  const [dailyChartMode, setDailyChartMode] = useState<"total" | "by-type">("by-type");
+  const [timeSeriesMode, setTimeSeriesMode] = useState<"cumulative" | "per-turn">("per-turn");
   const [timeSeriesBreakdownMode, setTimeSeriesBreakdownMode] = useState<
     "total" | "by-type"
-  >("total");
+  >("by-type");
   const [timeSeriesCursorStart, setTimeSeriesCursorStart] = useState<number | null>(null);
   const [timeSeriesCursorEnd, setTimeSeriesCursorEnd] = useState<number | null>(null);
   const [sessionSort, setSessionSort] = useState<
     "tokens" | "cost" | "recent" | "messages" | "errors"
-  >("cost");
+  >("recent");
   const [sessionSortDir, setSessionSortDir] = useState<"asc" | "desc">("desc");
   const [recentSessions, setRecentSessions] = useState<string[]>([]);
   const [sessionsTab, setSessionsTab] = useState<"all" | "recent">("all");
@@ -624,13 +708,21 @@ export function UsagePage() {
     return sessionSortDir === "asc" ? list.reverse() : list;
   }, [filteredSessions, sessionSort, sessionSortDir, chartMode, selectedDays]);
 
-  const sessionMap = useMemo(
-    () => new Map(sessions.map((session) => [session.key, session])),
-    [sessions],
+  const filteredSessionMap = useMemo(
+    () => new Map(filteredSessions.map((session) => [session.key, session])),
+    [filteredSessions],
   );
   const recentEntries = useMemo(
-    () => recentSessions.map((key) => sessionMap.get(key)).filter(Boolean) as SessionUsageEntry[],
-    [recentSessions, sessionMap],
+    () => recentSessions.map((key) => filteredSessionMap.get(key)).filter(Boolean) as SessionUsageEntry[],
+    [recentSessions, filteredSessionMap],
+  );
+  const sessionSelectionList = useMemo(
+    () => (sessionsTab === "recent" ? recentEntries : sortedSessionList).slice(0, 50),
+    [recentEntries, sessionsTab, sortedSessionList],
+  );
+  const selectedSessionEntries = useMemo(
+    () => sortedSessionList.filter((session) => selectedSessions.includes(session.key)),
+    [selectedSessions, sortedSessionList],
   );
 
   const displayTotals = useMemo(() => {
@@ -720,7 +812,17 @@ export function UsagePage() {
       : false);
 
   const timeSeriesPoints = timeSeriesQuery.data?.points ?? [];
-  const timeSeriesView = buildTimeSeriesView(timeSeriesPoints, timeSeriesMode);
+  const visibleTimeSeriesPoints = useMemo(
+    () =>
+      filterTimeSeriesPointsByScope(
+        timeSeriesPoints,
+        dateRange.startDate,
+        dateRange.endDate,
+        selectedDays,
+      ),
+    [dateRange.endDate, dateRange.startDate, selectedDays, timeSeriesPoints],
+  );
+  const timeSeriesView = buildTimeSeriesView(visibleTimeSeriesPoints, timeSeriesMode);
   const timeSeriesMax = Math.max(
     ...timeSeriesView.map((point) =>
       chartMode === "tokens" ? point.totalTokens : point.totalCost,
@@ -733,29 +835,193 @@ export function UsagePage() {
   );
 
   const timeSeriesSelection =
-    timeSeriesCursorStart != null && timeSeriesCursorEnd != null
+    timeSeriesCursorStart != null &&
+    timeSeriesCursorEnd != null &&
+    timeSeriesView[timeSeriesCursorStart] &&
+    timeSeriesView[timeSeriesCursorEnd]
       ? [Math.min(timeSeriesCursorStart, timeSeriesCursorEnd), Math.max(timeSeriesCursorStart, timeSeriesCursorEnd)]
       : null;
+
+  useEffect(() => {
+    if (
+      (timeSeriesCursorStart != null && !timeSeriesView[timeSeriesCursorStart]) ||
+      (timeSeriesCursorEnd != null && !timeSeriesView[timeSeriesCursorEnd])
+    ) {
+      setTimeSeriesCursorStart(null);
+      setTimeSeriesCursorEnd(null);
+    }
+  }, [timeSeriesCursorEnd, timeSeriesCursorStart, timeSeriesView]);
 
   const selectedRangeUsage =
     primarySelectedEntry?.usage && timeSeriesSelection
       ? computeFilteredUsageFromTimeSeries(
           primarySelectedEntry.usage,
-          timeSeriesPoints,
+          visibleTimeSeriesPoints,
           timeSeriesSelection[0],
           timeSeriesSelection[1],
         )
       : undefined;
 
   const rangeStartTimestamp =
-    timeSeriesSelection && timeSeriesPoints[timeSeriesSelection[0]]
-      ? timeSeriesPoints[timeSeriesSelection[0]].timestamp
+    timeSeriesSelection && visibleTimeSeriesPoints[timeSeriesSelection[0]]
+      ? visibleTimeSeriesPoints[timeSeriesSelection[0]].timestamp
       : null;
   const rangeEndTimestamp =
-    timeSeriesSelection && timeSeriesPoints[timeSeriesSelection[1]]
-      ? timeSeriesPoints[timeSeriesSelection[1]].timestamp
+    timeSeriesSelection && visibleTimeSeriesPoints[timeSeriesSelection[1]]
+      ? visibleTimeSeriesPoints[timeSeriesSelection[1]].timestamp
       : null;
 
+  const timeSeriesSelectionSummary =
+    selectedRangeUsage && timeSeriesSelection
+      ? pageCopy.rangeSummary(
+          timeSeriesSelection[1] - timeSeriesSelection[0] + 1,
+          chartMode === "tokens" ? pageCopy.tokens : pageCopy.cost,
+          formatDisplayValue(
+            chartMode === "tokens" ? selectedRangeUsage.totalTokens : selectedRangeUsage.totalCost,
+            chartMode,
+          ),
+        )
+      : null;
+  const timeSeriesGridStyle = {
+    gridTemplateColumns: `repeat(${Math.max(timeSeriesView.length, 1)}, minmax(10px, 1fr))`,
+  } satisfies CSSProperties;
+  const timeSeriesSelectionOverlayStyle = timeSeriesSelection
+    ? ({
+        gridColumn: `${timeSeriesSelection[0] + 1} / ${timeSeriesSelection[1] + 2}`,
+        gridRow: 1,
+      } satisfies CSSProperties)
+    : undefined;
+
+  const handleSelectHour = (hour: number, shiftKey: boolean) => {
+    setSelectedHours((current) =>
+      selectContiguousRange(
+        Array.from({ length: 24 }, (_, index) => index),
+        current,
+        hour,
+        shiftKey,
+      ),
+    );
+  };
+
+  const handleSelectDay = (day: string, shiftKey: boolean) => {
+    setSelectedDays((current) =>
+      selectContiguousRange(
+        filteredDaily.map((entry) => entry.date),
+        current,
+        day,
+        shiftKey,
+      ),
+    );
+  };
+
+  const handleSelectSession = (sessionKey: string, shiftKey: boolean) => {
+    setSelectedSessions((current) =>
+      selectContiguousRange(
+        sessionSelectionList.map((entry) => entry.key),
+        current,
+        sessionKey,
+        shiftKey,
+      ),
+    );
+    setRecentSessions((current) => {
+      const next = [sessionKey, ...current.filter((entry) => entry !== sessionKey)];
+      return next.slice(0, 10);
+    });
+  };
+
+  const handleSelectTimeSeriesPoint = (index: number, shiftKey: boolean) => {
+    if (shiftKey && timeSeriesCursorStart != null && timeSeriesView[timeSeriesCursorStart]) {
+      setTimeSeriesCursorEnd(index);
+      return;
+    }
+    setTimeSeriesCursorStart(index);
+    setTimeSeriesCursorEnd(index);
+  };
+
+  const renderSessionRow = (session: SessionUsageEntry, isSelected: boolean) => {
+    const value = computeSessionValue(session, chartMode, selectedDays);
+    const displayLabel = getSessionDisplayLabel(session);
+    const showSessionKey = Boolean(session.label?.trim()) && displayLabel !== session.key;
+    const meta: Array<{ label: string; value: string }> = [];
+
+    if (visibleColumns.includes("channel") && session.channel) {
+      meta.push({ label: pageCopy.channel, value: session.channel });
+    }
+    if (visibleColumns.includes("agent") && session.agentId) {
+      meta.push({ label: pageCopy.agent, value: session.agentId });
+    }
+    if (visibleColumns.includes("provider") && (session.modelProvider || session.providerOverride)) {
+      meta.push({
+        label: pageCopy.provider,
+        value: session.modelProvider ?? session.providerOverride ?? "-",
+      });
+    }
+    if (visibleColumns.includes("model") && session.model) {
+      meta.push({ label: pageCopy.modelLabel, value: session.model });
+    }
+    if (visibleColumns.includes("messages") && session.usage?.messageCounts) {
+      meta.push({ label: pageCopy.msgsShort, value: `${session.usage.messageCounts.total}` });
+    }
+    if (visibleColumns.includes("tools") && session.usage?.toolUsage) {
+      meta.push({ label: pageCopy.tools, value: `${session.usage.toolUsage.totalCalls}` });
+    }
+    if (visibleColumns.includes("errors") && (session.usage?.messageCounts?.errors ?? 0) > 0) {
+      meta.push({ label: pageCopy.errors, value: `${session.usage?.messageCounts?.errors ?? 0}` });
+    }
+    if (visibleColumns.includes("duration") && session.usage?.durationMs) {
+      meta.push({ label: pageCopy.duration, value: `${Math.round(session.usage.durationMs / 1000)}s` });
+    }
+
+    return (
+      <div
+        key={session.key}
+        className={`usage-session-row ${isSelected ? "selected" : ""}`}
+        onClick={(event) => handleSelectSession(session.key, event.shiftKey)}
+        title={session.key}
+      >
+        <div className="usage-session-row__main">
+          <div className="usage-session-row__title">{displayLabel}</div>
+          {showSessionKey && <div className="usage-session-row__key mono">{truncate(session.key, 72)}</div>}
+          {meta.length > 0 && (
+            <div className="usage-session-meta">
+              {meta.map((entry) => (
+                <span key={`${session.key}-${entry.label}`}>
+                  <span className="usage-session-meta__label">{entry.label}</span>
+                  <span>{entry.value}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="usage-session-row__side">
+          <button
+            type="button"
+            className="usage-session-copy-btn"
+            title={pageCopy.copySessionName}
+            aria-label={pageCopy.copySessionName}
+            onClick={(event) => {
+              event.stopPropagation();
+              void copyTextToClipboard(displayLabel);
+            }}
+          >
+            {pageCopy.copy}
+          </button>
+          <div className="usage-session-row__value">
+            <strong>{formatDisplayValue(value, chartMode)}</strong>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const allLogEntries = useMemo(
+    () =>
+      (logsQuery.data ?? []).map((entry) => ({
+        entry,
+        toolSummary: parseToolSummary(entry.content),
+      })),
+    [logsQuery.data],
+  );
   const filteredLogs = useMemo(() => {
     if (!logsQuery.data) {
       return [];
@@ -776,6 +1042,15 @@ export function UsagePage() {
     logFilterHasTools,
     logFilterQuery,
   ]);
+  const filteredLogEntries = useMemo(() => {
+    const filteredKeys = new Set(
+      filteredLogs.map((entry) => `${entry.timestamp}-${entry.role}-${entry.content}`),
+    );
+    return allLogEntries.filter(({ entry }) =>
+      filteredKeys.has(`${entry.timestamp}-${entry.role}-${entry.content}`),
+    );
+  }, [allLogEntries, filteredLogs]);
+  const isTimelineFiltered = rangeStartTimestamp != null && rangeEndTimestamp != null;
 
   const logToolOptions = useMemo(() => {
     if (logsQuery.data) {
@@ -785,6 +1060,59 @@ export function UsagePage() {
     }
     return uniqueValues(primarySelectedEntry?.usage?.toolUsage?.tools.map((tool) => tool.name) ?? []);
   }, [logsQuery.data, primarySelectedEntry?.usage?.toolUsage?.tools]);
+  const hasActiveLogFilters =
+    logFilterRoles.length > 0 || logFilterTools.length > 0 || logFilterHasTools || logFilterQuery.trim().length > 0;
+  const logCountLabel = pageCopy.logCount(
+    filteredLogEntries.length,
+    logsQuery.data?.length ?? 0,
+    isTimelineFiltered,
+  );
+  const contextSummary = useMemo(() => {
+    const contextWeight = primarySelectedEntry?.contextWeight;
+    const usage = primarySelectedEntry?.usage;
+    if (!contextWeight) {
+      return null;
+    }
+
+    const systemTokens = charsToTokens(contextWeight.systemPrompt.chars);
+    const skillsTokens = charsToTokens(contextWeight.skills.promptChars);
+    const toolsTokens = charsToTokens(
+      (contextWeight.tools.listChars ?? 0) + (contextWeight.tools.schemaChars ?? 0),
+    );
+    const filesTokens = charsToTokens(
+      contextWeight.injectedWorkspaceFiles.reduce((sum, file) => sum + file.injectedChars, 0),
+    );
+    const totalContextTokens = systemTokens + skillsTokens + toolsTokens + filesTokens;
+    const inputTokens = (usage?.input ?? 0) + (usage?.cacheRead ?? 0);
+    const contextPct =
+      inputTokens > 0 ? `${Math.min((totalContextTokens / inputTokens) * 100, 100).toFixed(0)}%` : null;
+
+    const skills = [...contextWeight.skills.entries].sort((left, right) => right.blockChars - left.blockChars);
+    const tools = [...contextWeight.tools.entries].sort(
+      (left, right) =>
+        right.summaryChars + right.schemaChars - (left.summaryChars + left.schemaChars),
+    );
+    const files = [...contextWeight.injectedWorkspaceFiles].sort(
+      (left, right) => right.injectedChars - left.injectedChars,
+    );
+    const limit = 4;
+
+    return {
+      systemTokens,
+      skillsTokens,
+      toolsTokens,
+      filesTokens,
+      totalContextTokens,
+      contextPct,
+      skills,
+      tools,
+      files,
+      visibleSkills: contextExpanded ? skills : skills.slice(0, limit),
+      visibleTools: contextExpanded ? tools : tools.slice(0, limit),
+      visibleFiles: contextExpanded ? files : files.slice(0, limit),
+      hasOverflow: skills.length > limit || tools.length > limit || files.length > limit,
+    };
+  }, [contextExpanded, primarySelectedEntry?.contextWeight, primarySelectedEntry?.usage]);
 
   if (!isConnected) {
     return (
@@ -1400,9 +1728,7 @@ export function UsagePage() {
                       key={hour}
                       className={`usage-hour-cell ${isSelected ? "selected" : ""}`}
                       style={{ background: bg, borderColor: border }}
-                      onClick={(event) =>
-                        setSelectedHours(useShiftToggle(hour, selectedHours, event.shiftKey))
-                      }
+                      onClick={(event) => handleSelectHour(hour, event.shiftKey)}
                     />
                   );
                 })}
@@ -1471,9 +1797,7 @@ export function UsagePage() {
                       <div
                         key={day.date}
                         className={`usage-bar-wrapper ${isSelected ? "selected" : ""}`}
-                        onClick={(event) =>
-                          setSelectedDays(useShiftToggle(day.date, selectedDays, event.shiftKey))
-                        }
+                        onClick={(event) => handleSelectDay(day.date, event.shiftKey)}
                       >
                         <div className="usage-bar-track">
                           {dailyChartMode === "by-type" ? (
@@ -1698,83 +2022,7 @@ export function UsagePage() {
             </div>
 
             <div className="usage-session-bars">
-              {(sessionsTab === "recent" ? recentEntries : sortedSessionList)
-                .slice(0, 50)
-                .map((session) => {
-                  const value = computeSessionValue(session, chartMode, selectedDays);
-                  const isSelected = selectedSessions.includes(session.key);
-                  const meta: Array<{ label: string; value: string }> = [];
-                  if (visibleColumns.includes("channel") && session.channel) {
-                    meta.push({ label: pageCopy.channel, value: session.channel });
-                  }
-                  if (visibleColumns.includes("agent") && session.agentId) {
-                    meta.push({ label: pageCopy.agent, value: session.agentId });
-                  }
-                  if (
-                    visibleColumns.includes("provider") &&
-                    (session.modelProvider || session.providerOverride)
-                  ) {
-                    meta.push({
-                      label: pageCopy.provider,
-                      value: session.modelProvider ?? session.providerOverride ?? "-",
-                    });
-                  }
-                  if (visibleColumns.includes("model") && session.model) {
-                    meta.push({ label: pageCopy.modelLabel, value: session.model });
-                  }
-                  if (visibleColumns.includes("messages") && session.usage?.messageCounts) {
-                    meta.push({ label: pageCopy.msgsShort, value: `${session.usage.messageCounts.total}` });
-                  }
-                  if (visibleColumns.includes("tools") && session.usage?.toolUsage) {
-                    meta.push({ label: pageCopy.tools, value: `${session.usage.toolUsage.totalCalls}` });
-                  }
-                  if (
-                    visibleColumns.includes("errors") &&
-                    (session.usage?.messageCounts?.errors ?? 0) > 0
-                  ) {
-                    meta.push({ label: pageCopy.errors, value: `${session.usage?.messageCounts?.errors ?? 0}` });
-                  }
-                  if (visibleColumns.includes("duration") && session.usage?.durationMs) {
-                    meta.push({ label: pageCopy.duration, value: `${Math.round(session.usage.durationMs / 1000)}s` });
-                  }
-                  return (
-                    <div
-                      key={session.key}
-                      className={`usage-session-row ${isSelected ? "selected" : ""}`}
-                      onClick={(event) => {
-                        setSelectedSessions(useShiftToggle(session.key, selectedSessions, event.shiftKey));
-                        setRecentSessions((current) => {
-                          const next = [session.key, ...current.filter((entry) => entry !== session.key)];
-                          return next.slice(0, 10);
-                        });
-                      }}
-                    >
-                      <div>
-                        <div className="usage-session-row__title">
-                          {session.label?.trim() || truncate(session.key, 42)}
-                        </div>
-                        <div className="usage-session-row__key mono">{truncate(session.key, 60)}</div>
-                        {meta.length > 0 && (
-                          <div className="usage-session-meta">
-                            {meta.map((entry) => (
-                              <span key={`${session.key}-${entry.label}`}>
-                                {entry.label}: {entry.value}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div className="usage-session-row__value">
-                        <strong>{formatDisplayValue(value, chartMode)}</strong>
-                        <span>
-                          {chartMode === "tokens"
-                            ? formatCost(session.usage?.totalCost ?? 0)
-                            : formatTokens(session.usage?.totalTokens ?? 0)}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
+              {sessionSelectionList.map((session) => renderSessionRow(session, selectedSessions.includes(session.key)))}
               {sessionsTab === "recent" && recentEntries.length === 0 && (
                 <div className="usage-empty-panel">{pageCopy.noRecentSessions}</div>
               )}
@@ -1785,6 +2033,21 @@ export function UsagePage() {
                 <div className="usage-empty-panel">{pageCopy.noSessionsInRange}</div>
               )}
             </div>
+            {selectedSessionEntries.length > 1 && (
+              <div className="usage-selected-sessions-panel">
+                <div className="usage-selected-sessions-panel__header">
+                  <div className="usage-insight-title" style={{ fontSize: "13px", color: "var(--text)" }}>
+                    {pageCopy.selectedCount(selectedSessionEntries.length)}
+                  </div>
+                  <button type="button" className="usage-chip" onClick={() => setSelectedSessions([])}>
+                    {pageCopy.clearSelection}
+                  </button>
+                </div>
+                <div className="usage-session-bars usage-session-bars--selected">
+                  {selectedSessionEntries.map((session) => renderSessionRow(session, true))}
+                </div>
+              </div>
+            )}
           </div>
         </Card>
       </div>
@@ -1884,27 +2147,50 @@ export function UsagePage() {
                       <div className="workspace-inline-status">{pageCopy.loadingTimeSeries}</div>
                     ) : timeSeriesView.length > 0 ? (
                       <>
-                        <div className="usage-timeseries-bars">
+                        <div className="usage-timeseries-track">
+                          <div className="usage-timeseries-bars" style={timeSeriesGridStyle}>
+                            {timeSeriesSelection && (
+                              <div
+                                className="usage-timeseries-selection-overlay"
+                                style={timeSeriesSelectionOverlayStyle}
+                              />
+                            )}
                           {timeSeriesView.map((point, index) => {
                             const value = chartMode === "tokens" ? point.totalTokens : point.totalCost;
                             const height = getBarHeight(value, timeSeriesMax);
-                            const inRange =
+                            const inRange = Boolean(
                               timeSeriesSelection &&
-                              index >= timeSeriesSelection[0] &&
-                              index <= timeSeriesSelection[1];
+                                index >= timeSeriesSelection[0] &&
+                                index <= timeSeriesSelection[1],
+                            );
+                            const isRangeStart = Boolean(timeSeriesSelection && index === timeSeriesSelection[0]);
+                            const isRangeEnd = Boolean(timeSeriesSelection && index === timeSeriesSelection[1]);
+                            const isDimmed = Boolean(timeSeriesSelection) && !inRange;
+                            const pointTimestamp = point.timestamp < 1e12 ? point.timestamp * 1000 : point.timestamp;
+                            const pointTooltip = [
+                              formatDateTime(pointTimestamp),
+                              `${pageCopy.total}: ${formatDisplayValue(value, chartMode)}`,
+                            ];
+                            if (timeSeriesBreakdownMode === "by-type") {
+                              pointTooltip.push(
+                                `${pageCopy.output}: ${formatTokens(point.output)}`,
+                                `${pageCopy.input}: ${formatTokens(point.input)}`,
+                                `${pageCopy.cacheWrite}: ${formatTokens(point.cacheWrite)}`,
+                                `${pageCopy.cacheRead}: ${formatTokens(point.cacheRead)}`,
+                              );
+                            }
                             return (
-                              <div
+                              <button
+                                type="button"
                                 key={`${point.timestamp}-${index}`}
-                                className={`usage-timeseries-bar ${inRange ? "selected" : ""}`}
-                                style={{ height: `${height}%` }}
-                                onClick={(event) => {
-                                  if (!event.shiftKey || timeSeriesCursorStart == null) {
-                                    setTimeSeriesCursorStart(index);
-                                    setTimeSeriesCursorEnd(index);
-                                    return;
-                                  }
-                                  setTimeSeriesCursorEnd(index);
+                                className={`usage-timeseries-bar ${inRange ? "selected" : ""} ${isDimmed ? "dimmed" : ""} ${isRangeStart ? "selected-start" : ""} ${isRangeEnd ? "selected-end" : ""}`}
+                                style={{
+                                  gridColumn: `${index + 1}`,
+                                  gridRow: 1,
+                                  height: `${height}%`,
                                 }}
+                                onClick={(event) => handleSelectTimeSeriesPoint(index, event.shiftKey)}
+                                title={pointTooltip.join(" · ")}
                               >
                                 {timeSeriesBreakdownMode === "by-type" && (
                                   <div className="usage-bar-stack" style={{ height: "100%" }}>
@@ -1914,22 +2200,38 @@ export function UsagePage() {
                                     <div className="usage-bar-segment cache-read" style={{ flex: point.cacheRead || 1 }} />
                                   </div>
                                 )}
-                              </div>
+                              </button>
                             );
                           })}
+                          </div>
                         </div>
                         <div className="usage-timeseries-foot">
-                          <span>
-                            {timeSeriesSelection
-                              ? pageCopy.rangeLabel(
-                                  formatDateTime(rangeStartTimestamp ?? undefined),
-                                  formatDateTime(rangeEndTimestamp ?? undefined),
-                                )
-                              : pageCopy.clickBarHint}
-                          </span>
+                          <div className="usage-timeseries-meta">
+                            {timeSeriesSelection ? (
+                              <>
+                                <span className="usage-timeseries-pill usage-timeseries-pill--active">
+                                  {pageCopy.selectedRange}
+                                </span>
+                                <span className="usage-timeseries-pill">
+                                  {pageCopy.rangeLabel(
+                                    formatDateTime(rangeStartTimestamp ?? undefined),
+                                    formatDateTime(rangeEndTimestamp ?? undefined),
+                                  )}
+                                </span>
+                              </>
+                            ) : (
+                              <span>{pageCopy.clickBarHint}</span>
+                            )}
+                            {timeSeriesSelectionSummary && (
+                              <strong className="usage-timeseries-pill usage-timeseries-pill--strong">
+                                {timeSeriesSelectionSummary}
+                              </strong>
+                            )}
+                          </div>
                           <button
                             type="button"
                             className="usage-chip"
+                            disabled={!timeSeriesSelection}
                             onClick={() => {
                               setTimeSeriesCursorStart(null);
                               setTimeSeriesCursorEnd(null);
@@ -1940,7 +2242,14 @@ export function UsagePage() {
                         </div>
                       </>
                     ) : (
-                      <div className="usage-empty-panel">{pageCopy.noTimeSeries}</div>
+                      <div className="usage-empty-panel">
+                        <strong>
+                          {timeSeriesPoints.length > 0 ? pageCopy.noTimeSeriesInRange : pageCopy.noTimeSeries}
+                        </strong>
+                        {timeSeriesPoints.length > 0 && selectedDays.length > 0 && (
+                          <span className="usage-query-hint">{pageCopy.activeDayFilters(selectedDays.length)}</span>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1949,128 +2258,119 @@ export function UsagePage() {
                   <div className="usage-insight-title" style={{ fontSize: "14px", color: "var(--text)" }}>
                     {pageCopy.contextAndTools}
                   </div>
-                  {primarySelectedEntry.contextWeight ? (
+                  {contextSummary ? (
                     <>
+                      <div className="usage-context-header">
+                        <div>
+                          <div className="usage-context-title">{pageCopy.contextEstimate}</div>
+                          <div className="usage-query-hint">
+                            {contextSummary.contextPct
+                              ? pageCopy.contextPctOfInput(contextSummary.contextPct)
+                              : pageCopy.baseContextPerMessage}
+                          </div>
+                        </div>
+                        {contextSummary.hasOverflow && (
+                          <button
+                            type="button"
+                            className="usage-chip"
+                            onClick={() => setContextExpanded((current) => !current)}
+                          >
+                            {contextExpanded ? pageCopy.collapseAll : pageCopy.expandAll}
+                          </button>
+                        )}
+                      </div>
                       <div className="usage-context-stack" style={{ marginTop: "12px" }}>
-                        {(() => {
-                          const system = primarySelectedEntry.contextWeight?.systemPrompt.chars ?? 0;
-                          const skills = primarySelectedEntry.contextWeight?.skills.promptChars ?? 0;
-                          const tools = (primarySelectedEntry.contextWeight?.tools.listChars ?? 0) +
-                            (primarySelectedEntry.contextWeight?.tools.schemaChars ?? 0);
-                          const files = primarySelectedEntry.contextWeight?.injectedWorkspaceFiles.reduce(
-                            (sum, file) => sum + file.injectedChars,
-                            0,
-                          ) ?? 0;
-                          const total = system + skills + tools + files || 1;
-                          return (
-                            <>
-                              <div className="usage-context-segment usage-bar-segment output" style={{ width: `${(system / total) * 100}%` }} />
-                              <div className="usage-context-segment usage-bar-segment input" style={{ width: `${(skills / total) * 100}%` }} />
-                              <div className="usage-context-segment usage-bar-segment cache-write" style={{ width: `${(tools / total) * 100}%` }} />
-                              <div className="usage-context-segment usage-bar-segment cache-read" style={{ width: `${(files / total) * 100}%` }} />
-                            </>
-                          );
-                        })()}
+                        <div
+                          className="usage-context-segment usage-bar-segment output"
+                          style={{ width: `${pct(contextSummary.systemTokens, contextSummary.totalContextTokens || 1)}%` }}
+                        />
+                        <div
+                          className="usage-context-segment usage-bar-segment input"
+                          style={{ width: `${pct(contextSummary.skillsTokens, contextSummary.totalContextTokens || 1)}%` }}
+                        />
+                        <div
+                          className="usage-context-segment usage-bar-segment cache-write"
+                          style={{ width: `${pct(contextSummary.toolsTokens, contextSummary.totalContextTokens || 1)}%` }}
+                        />
+                        <div
+                          className="usage-context-segment usage-bar-segment cache-read"
+                          style={{ width: `${pct(contextSummary.filesTokens, contextSummary.totalContextTokens || 1)}%` }}
+                        />
                       </div>
                       <div className="usage-context-legend" style={{ marginTop: "10px" }}>
                         <span>
-                          <span className="usage-dot usage-context-dot system" /> {pageCopy.system}
+                          <span className="usage-dot usage-context-dot system" /> {pageCopy.system} ~{formatTokens(contextSummary.systemTokens)}
                         </span>
                         <span>
-                          <span className="usage-dot usage-context-dot skills" /> {pageCopy.skills}
+                          <span className="usage-dot usage-context-dot skills" /> {pageCopy.skills} ~{formatTokens(contextSummary.skillsTokens)}
                         </span>
                         <span>
-                          <span className="usage-dot usage-context-dot tools" /> {pageCopy.tools}
+                          <span className="usage-dot usage-context-dot tools" /> {pageCopy.tools} ~{formatTokens(contextSummary.toolsTokens)}
                         </span>
                         <span>
-                          <span className="usage-dot usage-context-dot files" /> {pageCopy.files}
+                          <span className="usage-dot usage-context-dot files" /> {pageCopy.files} ~{formatTokens(contextSummary.filesTokens)}
                         </span>
                       </div>
+                      <div className="usage-context-total">
+                        {pageCopy.totalLabel}: ~{formatTokens(contextSummary.totalContextTokens)}
+                      </div>
                       <div className="usage-context-grid">
-                        <div className="usage-context-card">
-                          <h5>{pageCopy.skills}</h5>
-                          <div className="usage-context-list">
-                            {(contextExpanded
-                              ? primarySelectedEntry.contextWeight.skills.entries
-                              : primarySelectedEntry.contextWeight.skills.entries.slice(0, 4)
-                            ).map((entry) => (
-                              <div
-                                key={`skills-${entry.name}`}
-                                className="usage-context-item"
-                              >
-                                <span className="mono">{entry.name}</span>
-                                <span className="usage-list-sub">
-                                  ~{Math.round(entry.blockChars / 4)} tokens
-                                </span>
+                        {contextSummary.skills.length > 0 && (
+                          <div className="usage-context-card">
+                            <h5>{pageCopy.skills} ({contextSummary.skills.length})</h5>
+                            <div className="usage-context-list">
+                              {contextSummary.visibleSkills.map((entry) => (
+                                <div key={`skills-${entry.name}`} className="usage-context-item">
+                                  <span className="mono">{entry.name}</span>
+                                  <span className="usage-list-sub">~{formatTokens(charsToTokens(entry.blockChars))}</span>
+                                </div>
+                              ))}
+                            </div>
+                            {contextSummary.skills.length > contextSummary.visibleSkills.length && (
+                              <div className="usage-context-more">
+                                {pageCopy.moreCount(contextSummary.skills.length - contextSummary.visibleSkills.length)}
                               </div>
-                            ))}
+                            )}
                           </div>
-                          {primarySelectedEntry.contextWeight.skills.entries.length > 4 && (
-                            <button
-                              type="button"
-                              className="usage-chip"
-                              onClick={() => setContextExpanded((current) => !current)}
-                            >
-                              {contextExpanded ? pageCopy.collapse : pageCopy.expandAll}
-                            </button>
-                          )}
-                        </div>
-                        <div className="usage-context-card">
-                          <h5>{pageCopy.tools}</h5>
-                          <div className="usage-context-list">
-                            {(contextExpanded
-                              ? primarySelectedEntry.contextWeight.tools.entries
-                              : primarySelectedEntry.contextWeight.tools.entries.slice(0, 4)
-                            ).map((entry) => (
-                              <div
-                                key={`tools-${entry.name}`}
-                                className="usage-context-item"
-                              >
-                                <span className="mono">{entry.name}</span>
-                                <span className="usage-list-sub">
-                                  ~{Math.round((entry.summaryChars + entry.schemaChars) / 4)} tokens
-                                </span>
+                        )}
+                        {contextSummary.tools.length > 0 && (
+                          <div className="usage-context-card">
+                            <h5>{pageCopy.tools} ({contextSummary.tools.length})</h5>
+                            <div className="usage-context-list">
+                              {contextSummary.visibleTools.map((entry) => (
+                                <div key={`tools-${entry.name}`} className="usage-context-item">
+                                  <span className="mono">{entry.name}</span>
+                                  <span className="usage-list-sub">
+                                    ~{formatTokens(charsToTokens(entry.summaryChars + entry.schemaChars))}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            {contextSummary.tools.length > contextSummary.visibleTools.length && (
+                              <div className="usage-context-more">
+                                {pageCopy.moreCount(contextSummary.tools.length - contextSummary.visibleTools.length)}
                               </div>
-                            ))}
+                            )}
                           </div>
-                          {primarySelectedEntry.contextWeight.tools.entries.length > 4 && (
-                            <button
-                              type="button"
-                              className="usage-chip"
-                              onClick={() => setContextExpanded((current) => !current)}
-                            >
-                              {contextExpanded ? pageCopy.collapse : pageCopy.expandAll}
-                            </button>
-                          )}
-                        </div>
-                        <div className="usage-context-card">
-                          <h5>{pageCopy.files}</h5>
-                          <div className="usage-context-list">
-                            {(contextExpanded
-                              ? primarySelectedEntry.contextWeight.injectedWorkspaceFiles
-                              : primarySelectedEntry.contextWeight.injectedWorkspaceFiles.slice(0, 4)
-                            ).map((entry) => (
-                              <div
-                                key={`files-${entry.path}`}
-                                className="usage-context-item"
-                              >
-                                <span className="mono">{entry.path}</span>
-                                <span className="usage-list-sub">
-                                  ~{Math.round(entry.injectedChars / 4)} tokens
-                                </span>
+                        )}
+                        {contextSummary.files.length > 0 && (
+                          <div className="usage-context-card">
+                            <h5>{pageCopy.files} ({contextSummary.files.length})</h5>
+                            <div className="usage-context-list">
+                              {contextSummary.visibleFiles.map((entry) => (
+                                <div key={`files-${entry.path}`} className="usage-context-item">
+                                  <span className="mono">{entry.path}</span>
+                                  <span className="usage-list-sub">~{formatTokens(charsToTokens(entry.injectedChars))}</span>
+                                </div>
+                              ))}
+                            </div>
+                            {contextSummary.files.length > contextSummary.visibleFiles.length && (
+                              <div className="usage-context-more">
+                                {pageCopy.moreCount(contextSummary.files.length - contextSummary.visibleFiles.length)}
                               </div>
-                            ))}
+                            )}
                           </div>
-                          {primarySelectedEntry.contextWeight.injectedWorkspaceFiles.length > 4 && (
-                            <button
-                              type="button"
-                              className="usage-chip"
-                              onClick={() => setContextExpanded((current) => !current)}
-                            >
-                              {contextExpanded ? pageCopy.collapse : pageCopy.expandAll}
-                            </button>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -2079,16 +2379,14 @@ export function UsagePage() {
                 </div>
               </div>
 
-              <div className="usage-detail-card" style={{ marginTop: "16px" }}>
-                <div className="usage-card-header" style={{ padding: "0 0 12px" }}>
-                  <div>
-                    <div className="usage-insight-title" style={{ fontSize: "14px", color: "var(--text)" }}>
-                      {pageCopy.sessionLogs}
+                <div className="usage-detail-card" style={{ marginTop: "16px" }}>
+                  <div className="usage-card-header" style={{ padding: "0 0 12px" }}>
+                    <div>
+                      <div className="usage-insight-title" style={{ fontSize: "14px", color: "var(--text)" }}>
+                        {pageCopy.sessionLogs}
+                      </div>
+                      <div className="usage-query-hint">{logCountLabel}</div>
                     </div>
-                    <div className="usage-query-hint">
-                      {pageCopy.rowsStatus(filteredLogs.length, logsQuery.isFetching)}
-                    </div>
-                  </div>
                   <div className="usage-log-toolbar">
                     <div className="usage-log-filter-group">
                       {(["user", "assistant", "tool", "toolResult"] as SessionLogRole[]).map((role) => (
@@ -2169,6 +2467,7 @@ export function UsagePage() {
                     <button
                       type="button"
                       className="usage-chip"
+                      disabled={!hasActiveLogFilters}
                       onClick={() => {
                         setLogFilterRoles([]);
                         setLogFilterTools([]);
@@ -2178,38 +2477,54 @@ export function UsagePage() {
                     >
                       {pageCopy.clearFilters}
                     </button>
+                    <button
+                      type="button"
+                      className="usage-chip"
+                      onClick={() => setSessionLogsExpanded((current) => !current)}
+                    >
+                      {sessionLogsExpanded ? pageCopy.collapseAll : pageCopy.expandAll}
+                    </button>
                   </div>
                 </div>
 
                 {logsQuery.isLoading ? (
                   <div className="workspace-inline-status">{pageCopy.loadingLogs}</div>
-                ) : filteredLogs.length > 0 ? (
+                ) : (logsQuery.data?.length ?? 0) === 0 ? (
+                  <div className="usage-empty-panel">{pageCopy.noSessionLogs}</div>
+                ) : filteredLogEntries.length > 0 ? (
                   <div className="usage-log-list">
-                    {(sessionLogsExpanded ? filteredLogs : filteredLogs.slice(-20)).map((entry) => (
+                    {filteredLogEntries.map(({ entry, toolSummary }) => (
                       <div key={`${entry.timestamp}-${entry.role}-${entry.content.slice(0, 16)}`} className="usage-log-row">
-                        <span className={`usage-log-role usage-log-role--${entry.role}`}>{entry.role}</span>
-                        <div className="usage-log-content">
-                          <div className="usage-query-hint">{formatDateTime(entry.timestamp)}</div>
-                          <p>{parseToolSummary(entry.content).cleanContent || entry.content}</p>
+                        <div className="usage-log-row__header">
+                          <span className={`usage-log-role usage-log-role--${entry.role}`}>{entry.role}</span>
+                          <div className="usage-log-meta">
+                            <span>{formatDateTime(entry.timestamp)}</span>
+                            <span>{entry.tokens != null ? formatTokens(entry.tokens) : "-"}</span>
+                            <span>{entry.cost != null ? formatCurrency(entry.cost) : ""}</span>
+                          </div>
                         </div>
-                        <div className="usage-log-meta">
-                          <span>{entry.tokens != null ? formatTokens(entry.tokens) : "-"}</span>
-                          <span>{entry.cost != null ? formatCurrency(entry.cost) : ""}</span>
+                        <div className="usage-log-content">
+                          {(toolSummary.cleanContent || entry.content) && (
+                            <p>{toolSummary.cleanContent || entry.content}</p>
+                          )}
+                          {toolSummary.tools.length > 0 && (
+                            <details className="usage-log-tools" open={sessionLogsExpanded}>
+                              <summary>{toolSummary.summary}</summary>
+                              <div className="usage-log-tools-list">
+                                {toolSummary.tools.map(([name, count]) => (
+                                  <span key={`${entry.timestamp}-${name}`} className="usage-log-tools-pill">
+                                    {name} × {count}
+                                  </span>
+                                ))}
+                              </div>
+                            </details>
+                          )}
                         </div>
                       </div>
                     ))}
-                    {filteredLogs.length > 20 && (
-                      <button
-                        type="button"
-                        className="usage-chip"
-                        onClick={() => setSessionLogsExpanded((current) => !current)}
-                      >
-                        {sessionLogsExpanded ? pageCopy.collapse : pageCopy.expandAll}
-                      </button>
-                    )}
                   </div>
                 ) : (
-                  <div className="usage-empty-panel">{pageCopy.noSessionLogs}</div>
+                  <div className="usage-empty-panel">{pageCopy.noFilteredLogs}</div>
                 )}
               </div>
             </div>

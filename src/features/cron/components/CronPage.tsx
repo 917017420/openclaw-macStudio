@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   CalendarClock,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button, Card, StatusBadge } from "@/components/ui";
 import { useAgentsDirectory } from "@/features/chat/hooks/useAgents";
+import { useChatStore } from "@/features/chat/store";
 import { useConnectionStore } from "@/features/connection/store";
 import { isChineseLanguage, useAppPreferencesStore } from "@/features/preferences/store";
 import { gateway } from "@/lib/gateway";
@@ -177,6 +179,7 @@ type CronFormState = {
   description: string;
   enabled: boolean;
   agentId: string;
+  clearAgent: boolean;
   sessionKey: string;
   scheduleKind: "every" | "at" | "cron";
   scheduleAt: string;
@@ -212,6 +215,12 @@ type CronFormState = {
 
 type CronFieldKey = keyof CronFormState;
 type CronFieldErrors = Partial<Record<CronFieldKey, string>>;
+type BlockingField = {
+  key: CronFieldKey;
+  inputId: string;
+  label: string;
+  message: string;
+};
 type Notice = { kind: "info" | "error"; text: string };
 type CronAction =
   | { type: "toggle"; job: CronJob; enabled: boolean }
@@ -222,6 +231,7 @@ type CronAction =
 const CRON_QUERY_KEY = "cron-dashboard";
 const DEFAULT_PAGE_SIZE = 40;
 const DEFAULT_CHANNEL = "last";
+const CRON_THINKING_SUGGESTIONS = ["off", "minimal", "low", "medium", "high"];
 const TIMEZONE_FALLBACKS = ["UTC", "America/Los_Angeles", "America/New_York", "Asia/Shanghai", "Europe/London"];
 const intlWithSupportedValues = Intl as typeof Intl & {
   supportedValuesOf?: (key: string) => string[];
@@ -259,6 +269,7 @@ function defaultCronForm(): CronFormState {
     description: "",
     enabled: true,
     agentId: "",
+    clearAgent: false,
     sessionKey: "",
     scheduleKind: "every",
     scheduleAt: "",
@@ -926,6 +937,7 @@ function orderedBlockingFields(errors: CronFieldErrors, isChinese = false) {
     description: isChinese ? "描述" : "Description",
     enabled: isChinese ? "启用" : "Enabled",
     agentId: isChinese ? "智能体 ID" : "Agent ID",
+    clearAgent: isChinese ? "清空智能体覆盖" : "Clear agent override",
     sessionKey: isChinese ? "会话 Key" : "Session key",
     scheduleKind: isChinese ? "计划类型" : "Schedule type",
     scheduleAt: isChinese ? "执行时间" : "Run at",
@@ -973,8 +985,38 @@ function orderedBlockingFields(errors: CronFieldErrors, isChinese = false) {
   ].flatMap((key) => {
     const typedKey = key as CronFieldKey;
     const message = errors[typedKey];
-    return message ? [{ key: typedKey, label: labels[typedKey], message }] : [];
+    return message
+      ? [{ key: typedKey, inputId: inputIdForField(typedKey), label: labels[typedKey], message } satisfies BlockingField]
+      : [];
   });
+}
+
+function errorIdForField(key: CronFieldKey) {
+  return `cron-error-${key}`;
+}
+
+function inputIdForField(key: CronFieldKey) {
+  if (key === "name") return "cron-name";
+  if (key === "scheduleAt") return "cron-schedule-at";
+  if (key === "everyAmount") return "cron-every-amount";
+  if (key === "cronExpr") return "cron-cron-expr";
+  if (key === "staggerAmount") return "cron-stagger-amount";
+  if (key === "payloadText") return "cron-payload-text";
+  if (key === "payloadModel") return "cron-payload-model";
+  if (key === "payloadThinking") return "cron-payload-thinking";
+  if (key === "timeoutSeconds") return "cron-timeout-seconds";
+  if (key === "failureAlertAfter") return "cron-failure-alert-after";
+  if (key === "failureAlertCooldownSeconds") return "cron-failure-alert-cooldown-seconds";
+  return "cron-delivery-to";
+}
+
+function fieldA11yProps(key: CronFieldKey, errors: CronFieldErrors) {
+  const message = errors[key];
+  return {
+    id: inputIdForField(key),
+    "aria-invalid": message ? true : undefined,
+    "aria-describedby": message ? errorIdForField(key) : undefined,
+  };
 }
 
 function ensureCurrentOption(options: string[], current: string) {
@@ -992,8 +1034,8 @@ function formatQueryError(error: unknown) {
   return String(error);
 }
 
-function renderFieldError(message?: string) {
-  return message ? <div className="cron-field__error">{message}</div> : null;
+function renderFieldError(message?: string, id?: string) {
+  return message ? <div id={id} className="cron-field__error">{message}</div> : null;
 }
 
 function renderFieldHint(message?: string) {
@@ -1078,7 +1120,10 @@ function MetricCard(props: { label: string; value: string; subcopy: string; icon
 
 export function CronPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const isConnected = useConnectionStore((state) => state.state === "connected");
+  const selectAgent = useChatStore((state) => state.selectAgent);
+  const selectSession = useChatStore((state) => state.selectSession);
   const agentsQuery = useAgentsDirectory();
   const language = useAppPreferencesStore((store) => store.language);
   const isChinese = isChineseLanguage(language);
@@ -1235,6 +1280,18 @@ export function CronPage() {
     [form.payloadModel, supportQuery.data?.models],
   );
 
+  const thinkingSuggestions = useMemo(() => {
+    const fromJobs = allLoadedJobs.flatMap((job) =>
+      job.payload.kind === "agentTurn" && job.payload.thinking ? [job.payload.thinking] : [],
+    );
+    return ensureCurrentOption(
+      Array.from(new Set([...CRON_THINKING_SUGGESTIONS, ...fromJobs])).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+      form.payloadThinking,
+    );
+  }, [allLoadedJobs, form.payloadThinking]);
+
   const timezoneSuggestions = useMemo(() => {
     const fromJobs = allLoadedJobs.flatMap((job) =>
       job.schedule.kind === "cron" && job.schedule.tz ? [job.schedule.tz] : [],
@@ -1316,12 +1373,31 @@ export function CronPage() {
     await queryClient.invalidateQueries({ queryKey: [CRON_QUERY_KEY] });
   };
 
+  const focusFormField = (inputId: string) => {
+    const element = document.getElementById(inputId);
+    if (!(element instanceof HTMLElement)) return;
+    element.focus();
+    element.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
+
+  const openChatSession = (sessionKey?: string | null) => {
+    const nextSessionKey = sessionKey?.trim();
+    if (!nextSessionKey) {
+      setNotice({ kind: "error", text: t("该运行没有可打开的会话。", "This run does not have an openable chat session.") });
+      return;
+    }
+    const agentMatch = nextSessionKey.match(/^agent:([^:]+):/);
+    selectAgent(agentMatch?.[1] ?? null);
+    selectSession(nextSessionKey);
+    navigate("/chat");
+  };
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = {
         name: form.name.trim(),
         description: form.description.trim(),
-        agentId: form.agentId.trim() || undefined,
+        agentId: form.clearAgent ? null : form.agentId.trim() || undefined,
         sessionKey: form.sessionKey.trim() || undefined,
         enabled: form.enabled,
         deleteAfterRun: form.deleteAfterRun,
@@ -1422,6 +1498,7 @@ export function CronPage() {
   function startCloning(job: CronJob) {
     const clone = formFromJob(job);
     clone.name = buildCloneName(job.name, allLoadedJobs.map((entry) => entry.name), isChinese);
+    clone.clearAgent = false;
     setEditingJobId(null);
     setSelectedJobId(job.id);
     setForm(clone);
@@ -1858,7 +1935,7 @@ export function CronPage() {
                   </Button>
                   <Button size="sm" onClick={() => actionMutation.mutate({ type: "run", job: selectedJob, mode: "due" })}>
                     <Play size={12} />
-                    {t("运行到期任务", "Run Due")}
+                    {t("仅在到期时运行", "Run if due")}
                   </Button>
                 </div>
               </div>
@@ -2092,6 +2169,11 @@ export function CronPage() {
                           <p>{formatDateTime(selectedRun.ts)} · {formatRelativeTimestamp(selectedRun.ts, isChinese)}</p>
                         </div>
                         <div className="cron-card__header-actions">
+                          {selectedRun.sessionKey && (
+                            <Button variant="secondary" size="sm" onClick={() => openChatSession(selectedRun.sessionKey)}>
+                              {t("打开运行会话", "Open Run Chat")}
+                            </Button>
+                          )}
                           <span className={cx("cron-pill", `cron-pill--${runTone(getRunStatus(selectedRun))}`)}>
                             {formatRunStatusLabel(getRunStatus(selectedRun), isChinese)}
                           </span>
@@ -2171,13 +2253,25 @@ export function CronPage() {
             </div>
 
             {blockingFields.length > 0 && (
-              <div className="cron-inline-alert compact">
-                <AlertTriangle size={16} />
-                <span>
+              <div className="cron-form-status" role="status" aria-live="polite">
+                <div className="cron-form-status__title">
+                  <AlertTriangle size={16} />
+                  <span>{t("暂时还不能创建任务", "Can't add job yet")}</span>
+                </div>
+                <div className="cron-form-status__subtitle">
                   {isChinese
-                    ? `保存前请先修复 ${blockingFields.length} 个字段。`
-                    : `Fix ${blockingFields.length} field${blockingFields.length === 1 ? "" : "s"} before saving.`}
-                </span>
+                    ? `还需修复 ${blockingFields.length} 个字段后才能继续。`
+                    : `Fix ${blockingFields.length} field${blockingFields.length === 1 ? "" : "s"} to continue.`}
+                </div>
+                <ul className="cron-form-status__list">
+                  {blockingFields.map((field) => (
+                    <li key={field.key}>
+                      <button type="button" className="cron-form-status__link" onClick={() => focusFormField(field.inputId)}>
+                        {field.label}: {field.message}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -2196,13 +2290,14 @@ export function CronPage() {
                   <label className="cron-field cron-span-2">
                     <span>{t("名称", "Name")}</span>
                     <input
+                      {...fieldA11yProps("name", fieldErrors)}
                       className={cx(fieldErrors.name && "is-invalid")}
                       value={form.name}
                       onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                       placeholder={t("晨间摘要", "Morning digest")}
                     />
                     {renderFieldHint(t("会显示在任务列表、运行历史和告警里。", "Used in the jobs list, run history, and alerts."))}
-                    {renderFieldError(fieldErrors.name)}
+                    {renderFieldError(fieldErrors.name, errorIdForField("name"))}
                   </label>
                   <label className="cron-field cron-span-2">
                     <span>{t("描述", "Description")}</span>
@@ -2216,16 +2311,33 @@ export function CronPage() {
                   <label className="cron-field">
                     <span>{t("智能体 ID", "Agent ID")}</span>
                     <input
+                      id="cron-agent-id"
                       value={form.agentId}
                       list="cron-agent-suggestions"
+                      disabled={form.clearAgent}
                       onChange={(event) => setForm((current) => ({ ...current, agentId: event.target.value }))}
                       placeholder={t("可选覆盖", "Optional override")}
                     />
                     {renderFieldHint(t("留空则继承默认智能体路由。", "Leave blank to inherit the default agent routing."))}
                   </label>
+                  <label className="cron-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.clearAgent}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          clearAgent: event.target.checked,
+                          agentId: event.target.checked ? "" : current.agentId,
+                        }))
+                      }
+                    />
+                    <CheckboxCopy label={t("清空智能体覆盖", "Clear agent override")} hint={t("显式移除已有的智能体覆盖，回退到默认路由。", "Explicitly remove any existing agent override and fall back to default routing.")} />
+                  </label>
                   <label className="cron-field">
                     <span>{t("会话 Key", "Session key")}</span>
                     <input
+                      id="cron-session-key"
                       value={form.sessionKey}
                       onChange={(event) => setForm((current) => ({ ...current, sessionKey: event.target.value }))}
                       placeholder={t("可选会话绑定", "Optional session pinning")}
@@ -2275,13 +2387,14 @@ export function CronPage() {
                       <label className="cron-field">
                         <span>{t("重复间隔", "Repeat every")}</span>
                         <input
+                          {...fieldA11yProps("everyAmount", fieldErrors)}
                           className={cx(fieldErrors.everyAmount && "is-invalid")}
                           value={form.everyAmount}
                           onChange={(event) => setForm((current) => ({ ...current, everyAmount: event.target.value }))}
                           placeholder="15"
                         />
                         {renderFieldHint(t("请输入大于 0 的整数频率。", "Use a positive integer cadence."))}
-                        {renderFieldError(fieldErrors.everyAmount)}
+                        {renderFieldError(fieldErrors.everyAmount, errorIdForField("everyAmount"))}
                       </label>
                       <label className="cron-field">
                         <span>{t("单位", "Unit")}</span>
@@ -2303,12 +2416,13 @@ export function CronPage() {
                       <span>{t("执行时间", "Run at")}</span>
                       <input
                         type="datetime-local"
+                        {...fieldA11yProps("scheduleAt", fieldErrors)}
                         className={cx(fieldErrors.scheduleAt && "is-invalid")}
                         value={form.scheduleAt}
                         onChange={(event) => setForm((current) => ({ ...current, scheduleAt: event.target.value }))}
                       />
                       {renderFieldHint(t("单次任务使用本地日期和时间。", "Use a local date and time for this one-shot job."))}
-                      {renderFieldError(fieldErrors.scheduleAt)}
+                      {renderFieldError(fieldErrors.scheduleAt, errorIdForField("scheduleAt"))}
                     </label>
                   )}
 
@@ -2317,19 +2431,20 @@ export function CronPage() {
                       <label className="cron-field cron-span-2">
                         <span>{t("Cron 表达式", "Cron expression")}</span>
                         <input
-                        className={cx(fieldErrors.cronExpr && "is-invalid")}
-                        value={form.cronExpr}
-                        onChange={(event) => setForm((current) => ({ ...current, cronExpr: event.target.value }))}
-                        placeholder="0 * * * *"
-                      />
-                      {renderFieldHint(t("五段 Cron 语法，下方可选配置时区。", "Five-field cron syntax, with optional timezone below."))}
-                      {renderFieldError(fieldErrors.cronExpr)}
-                    </label>
+                          {...fieldA11yProps("cronExpr", fieldErrors)}
+                          className={cx(fieldErrors.cronExpr && "is-invalid")}
+                          value={form.cronExpr}
+                          onChange={(event) => setForm((current) => ({ ...current, cronExpr: event.target.value }))}
+                          placeholder="0 * * * *"
+                        />
+                        {renderFieldHint(t("五段 Cron 语法，下方可选配置时区。", "Five-field cron syntax, with optional timezone below."))}
+                        {renderFieldError(fieldErrors.cronExpr, errorIdForField("cronExpr"))}
+                      </label>
                       <label className="cron-field">
                         <span>{t("时区", "Timezone")}</span>
                         <input
                           value={form.cronTz}
-                          list="cron-timezone-suggestions"
+                          list="cron-tz-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, cronTz: event.target.value }))}
                           placeholder={t("UTC 或 Asia/Shanghai", "UTC or America/Los_Angeles")}
                         />
@@ -2347,13 +2462,14 @@ export function CronPage() {
                         <span>{t("错峰", "Stagger")}</span>
                         <input
                           disabled={form.scheduleExact}
+                          {...fieldA11yProps("staggerAmount", fieldErrors)}
                           className={cx(fieldErrors.staggerAmount && "is-invalid")}
                           value={form.staggerAmount}
                           onChange={(event) => setForm((current) => ({ ...current, staggerAmount: event.target.value }))}
                           placeholder={t("可选", "Optional")}
                         />
                         {renderFieldHint(t("用于分散密集任务的可选时间窗口。", "Optional spread window for distributing clustered jobs."))}
-                        {renderFieldError(fieldErrors.staggerAmount)}
+                        {renderFieldError(fieldErrors.staggerAmount, errorIdForField("staggerAmount"))}
                       </label>
                       <label className="cron-field">
                         <span>{t("错峰单位", "Stagger unit")}</span>
@@ -2415,18 +2531,20 @@ export function CronPage() {
                     <label className="cron-field">
                       <span>{t("超时秒数", "Timeout seconds")}</span>
                       <input
+                        {...fieldA11yProps("timeoutSeconds", fieldErrors)}
                         className={cx(fieldErrors.timeoutSeconds && "is-invalid")}
                         value={form.timeoutSeconds}
                         onChange={(event) => setForm((current) => ({ ...current, timeoutSeconds: event.target.value }))}
                         placeholder={t("可选", "Optional")}
                       />
                       {renderFieldHint(t("给长时间运行的智能体轮次设置硬性停止时间。", "Optional hard stop for long-running agent turns."))}
-                      {renderFieldError(fieldErrors.timeoutSeconds)}
+                      {renderFieldError(fieldErrors.timeoutSeconds, errorIdForField("timeoutSeconds"))}
                     </label>
                   )}
                   <label className="cron-field cron-span-2">
                     <span>{form.payloadKind === "agentTurn" ? t("提示词", "Prompt") : t("事件文本", "Event text")}</span>
                     <textarea
+                      {...fieldA11yProps("payloadText", fieldErrors)}
                       className={cx("cron-textarea", fieldErrors.payloadText && "is-invalid")}
                       value={form.payloadText}
                       onChange={(event) => setForm((current) => ({ ...current, payloadText: event.target.value }))}
@@ -2437,13 +2555,14 @@ export function CronPage() {
                       }
                     />
                     {renderFieldHint(form.payloadKind === "agentTurn" ? t("将作为本次定时运行的轮次消息发送。", "Sent as the turn message for this scheduled run.") : t("将作为原始系统事件负载发送。", "Sent as the raw system event payload."))}
-                    {renderFieldError(fieldErrors.payloadText)}
+                    {renderFieldError(fieldErrors.payloadText, errorIdForField("payloadText"))}
                   </label>
                   {form.payloadKind === "agentTurn" && (
                     <>
                       <label className="cron-field">
                         <span>{t("模型", "Model")}</span>
                         <input
+                          id="cron-payload-model"
                           value={form.payloadModel}
                           list="cron-model-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, payloadModel: event.target.value }))}
@@ -2454,7 +2573,9 @@ export function CronPage() {
                       <label className="cron-field">
                         <span>{t("思考预算", "Thinking")}</span>
                         <input
+                          id="cron-payload-thinking"
                           value={form.payloadThinking}
+                          list="cron-thinking-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, payloadThinking: event.target.value }))}
                           placeholder={t("可选思考预算", "Optional reasoning budget")}
                         />
@@ -2482,6 +2603,7 @@ export function CronPage() {
                   <label className="cron-field">
                     <span>{t("投递模式", "Delivery mode")}</span>
                     <select
+                      id="cron-delivery-mode"
                       className={cx(fieldErrors.deliveryMode && "is-invalid")}
                       value={form.deliveryMode}
                       onChange={(event) => setForm((current) => ({ ...current, deliveryMode: event.target.value as CronFormState["deliveryMode"] }))}
@@ -2524,7 +2646,7 @@ export function CronPage() {
                         <span>{t("账号 ID", "Account ID")}</span>
                         <input
                           value={form.deliveryAccountId}
-                          list="cron-account-suggestions"
+                          list="cron-delivery-account-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, deliveryAccountId: event.target.value }))}
                           placeholder={t("可选多账号路由", "Optional multi-account routing")}
                         />
@@ -2537,13 +2659,14 @@ export function CronPage() {
                     <label className="cron-field cron-span-2">
                       <span>{t("Webhook 地址", "Webhook URL")}</span>
                       <input
+                        {...fieldA11yProps("deliveryTo", fieldErrors)}
                         className={cx(fieldErrors.deliveryTo && "is-invalid")}
                         value={form.deliveryTo}
                         onChange={(event) => setForm((current) => ({ ...current, deliveryTo: event.target.value }))}
                         placeholder="https://example.com/hook"
                       />
                       {renderFieldHint(t("网关会把成功运行的输出 POST 到这个地址。", "The gateway posts successful run output to this URL."))}
-                      {renderFieldError(fieldErrors.deliveryTo)}
+                      {renderFieldError(fieldErrors.deliveryTo, errorIdForField("deliveryTo"))}
                     </label>
                   )}
 
@@ -2591,24 +2714,26 @@ export function CronPage() {
                       <label className="cron-field">
                         <span>{t("告警阈值", "Alert after")}</span>
                         <input
+                          {...fieldA11yProps("failureAlertAfter", fieldErrors)}
                           className={cx(fieldErrors.failureAlertAfter && "is-invalid")}
                           value={form.failureAlertAfter}
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertAfter: event.target.value }))}
                           placeholder="3"
                         />
                         {renderFieldHint(t("连续失败多少次后触发首次告警。", "How many consecutive failures occur before the first alert."))}
-                        {renderFieldError(fieldErrors.failureAlertAfter)}
+                        {renderFieldError(fieldErrors.failureAlertAfter, errorIdForField("failureAlertAfter"))}
                       </label>
                       <label className="cron-field">
                         <span>{t("冷却秒数", "Cooldown seconds")}</span>
                         <input
+                          {...fieldA11yProps("failureAlertCooldownSeconds", fieldErrors)}
                           className={cx(fieldErrors.failureAlertCooldownSeconds && "is-invalid")}
                           value={form.failureAlertCooldownSeconds}
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertCooldownSeconds: event.target.value }))}
                           placeholder="600"
                         />
                         {renderFieldHint(t("重复告警之间至少需要安静多久。", "Minimum quiet period between repeated alerts."))}
-                        {renderFieldError(fieldErrors.failureAlertCooldownSeconds)}
+                        {renderFieldError(fieldErrors.failureAlertCooldownSeconds, errorIdForField("failureAlertCooldownSeconds"))}
                       </label>
                       <label className="cron-field">
                         <span>{t("告警方式", "Alert mode")}</span>
@@ -2649,7 +2774,7 @@ export function CronPage() {
                         <span>{t("告警账号 ID", "Alert account ID")}</span>
                         <input
                           value={form.failureAlertAccountId}
-                          list="cron-account-suggestions"
+                          list="cron-delivery-account-suggestions"
                           onChange={(event) => setForm((current) => ({ ...current, failureAlertAccountId: event.target.value }))}
                           placeholder={t("可选多账号路由", "Optional multi-account routing")}
                         />
@@ -2731,7 +2856,12 @@ export function CronPage() {
           <option key={model} value={model} />
         ))}
       </datalist>
-      <datalist id="cron-timezone-suggestions">
+      <datalist id="cron-thinking-suggestions">
+        {thinkingSuggestions.map((value) => (
+          <option key={value} value={value} />
+        ))}
+      </datalist>
+      <datalist id="cron-tz-suggestions">
         {timezoneSuggestions.map((timezone) => (
           <option key={timezone} value={timezone} />
         ))}
@@ -2741,7 +2871,7 @@ export function CronPage() {
           <option key={value} value={value} />
         ))}
       </datalist>
-      <datalist id="cron-account-suggestions">
+      <datalist id="cron-delivery-account-suggestions">
         {accountSuggestions.map((value) => (
           <option key={value} value={value} />
         ))}

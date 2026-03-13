@@ -849,7 +849,7 @@ export function toDateInputValue(date: Date) {
     .slice(0, 10);
 }
 
-export function createDefaultDateRange(days = 7) {
+export function createDefaultDateRange(days = 1) {
   const end = new Date();
   const start = new Date(end);
   start.setDate(end.getDate() - (days - 1));
