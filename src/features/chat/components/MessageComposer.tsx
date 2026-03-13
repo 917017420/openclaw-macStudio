@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Paperclip, Send, Square, X } from "lucide-react";
 import { useChatStore } from "@/features/chat/store";
 import { useChatActions } from "@/features/chat/hooks/useChatActions";
@@ -21,7 +21,6 @@ export const MessageComposer = memo(function MessageComposer() {
   const isStreaming = useChatStore((s) => s.isStreaming);
   const setDraft = useChatStore((s) => s.setDraft);
   const setAttachments = useChatStore((s) => s.setAttachments);
-  const removeQueuedMessage = useChatStore((s) => s.removeQueuedMessage);
   const { sendMessage, abortStreaming } = useChatActions();
   const { data: models, isLoading: modelsLoading } = useModels(selectedAgentId);
   const language = useAppPreferencesStore((store) => store.language);
@@ -36,12 +35,6 @@ export const MessageComposer = memo(function MessageComposer() {
   const attachments = useChatStore((s) =>
     sessionKey ? s.attachmentsBySession[sessionKey] ?? EMPTY_ATTACHMENTS : EMPTY_ATTACHMENTS,
   );
-  const chatQueue = useChatStore((s) => s.chatQueue);
-  const queuedItems = useMemo(
-    () => (sessionKey ? chatQueue.filter((item) => item.sessionKey === sessionKey) : []),
-    [chatQueue, sessionKey],
-  );
-
   const appendAttachments = useCallback(async (files: FileList | File[]) => {
     if (!sessionKey) return;
     const readers = Array.from(files).filter((file) => file.type.startsWith("image/"));
@@ -281,30 +274,6 @@ export const MessageComposer = memo(function MessageComposer() {
             <span>{isStreaming ? (isChinese ? "排队发送" : "Queue") : isChinese ? "发送" : "Send"}</span>
           </button>
         </div>
-
-        {queuedItems.length > 0 ? (
-          <div className="chat-queue" role="status" aria-live="polite">
-            <div className="chat-queue__title">{isChinese ? `队列中（${queuedItems.length}）` : `Queued (${queuedItems.length})`}</div>
-            <div className="chat-queue__list">
-              {queuedItems.map((item) => (
-                <div key={item.id} className="chat-queue__item">
-                  <div className="chat-queue__text">
-                    {item.text || (item.attachments.length > 0 ? (isChinese ? `图片（${item.attachments.length}）` : `Image (${item.attachments.length})`) : "")}
-                  </div>
-                  <button
-                    type="button"
-                    className="composer-btn chat-queue__remove"
-                    onClick={() => removeQueuedMessage(item.id)}
-                    aria-label={isChinese ? "移除排队消息" : "Remove queued message"}
-                    title={isChinese ? "移除排队消息" : "Remove queued message"}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </div>
     </div>
   );

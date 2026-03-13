@@ -6,9 +6,11 @@ import { useAgents } from "@/features/chat/hooks/useAgents";
 import {
   buildChatItems,
   MessageGroupView,
+  QueuedMessageGroup,
   ReadingIndicatorGroup,
   StreamingGroup,
   type MessageGroup,
+  type QueuedThreadItem,
 } from "@/features/chat/chat/grouped-render";
 import { MarkdownSidebar } from "./MarkdownSidebar";
 
@@ -24,7 +26,7 @@ function ChatDivider({ label }: { label: string }) {
   );
 }
 
-export const MessageList = memo(function MessageList() {
+export const MessageList = memo(function MessageList({ isLoading = false }: { isLoading?: boolean }) {
   const selectedSessionId = useChatStore((s) => s.selectedSessionId);
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const messagesRaw = useChatStore((s) =>
@@ -41,8 +43,12 @@ export const MessageList = memo(function MessageList() {
   const closeSidebar = useChatStore((s) => s.closeSidebar);
   const openSidebar = useChatStore((s) => s.openSidebar);
   const setSplitRatio = useChatStore((s) => s.setSplitRatio);
+  const removeQueuedMessage = useChatStore((s) => s.removeQueuedMessage);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const streamingSessionKey = useChatStore((s) => s.streamingSessionKey);
+  const queuedMessages = useChatStore((s) =>
+    selectedSessionId ? s.chatQueue.filter((item) => item.sessionKey === selectedSessionId) : EMPTY_MESSAGES,
+  );
   const messages = messagesRaw ?? EMPTY_MESSAGES;
   const { data: agents } = useAgents();
 
@@ -75,13 +81,16 @@ export const MessageList = memo(function MessageList() {
             ? (streamingMessage.content ?? "")
             : null,
         streamStartedAt: streamingMessage?.timestamp ?? null,
+        queuedMessages,
       }),
-    [historyMessages, selectedSessionId, streamingMessage, streamingSessionKey, toolMessages],
+    [historyMessages, queuedMessages, selectedSessionId, streamingMessage, streamingSessionKey, toolMessages],
   );
 
   const lastKey = chatItems[chatItems.length - 1]?.key ?? null;
   const { containerRef, scrollToBottom, isNearBottom } = useAutoScroll<HTMLDivElement>({
-    deps: [lastKey, isStreaming, streamingMessage?.content],
+    sessionKey: selectedSessionId,
+    loading: isLoading,
+    deps: [lastKey, chatItems.length, isStreaming, streamingMessage?.content],
   });
 
   const showNewMessages = !isNearBottom && chatItems.length > 0;
@@ -112,7 +121,7 @@ export const MessageList = memo(function MessageList() {
     }
   }, [closeSidebar, selectedSessionId]);
 
-  if (messages.length === 0 && !streamingMessage && toolMessages.length === 0) {
+  if (messages.length === 0 && !streamingMessage && toolMessages.length === 0 && queuedMessages.length === 0) {
     return (
       <div className={`chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}`}>
         <div className="chat-main" style={{ flex: sidebarOpen ? `0 0 ${splitRatio * 100}%` : undefined }}>
@@ -178,6 +187,15 @@ export const MessageList = memo(function MessageList() {
                       assistantAvatar={assistantAvatar}
                       onOpenSidebar={openSidebar}
                       showReasoning={true}
+                    />
+                  );
+                }
+                if (item.kind === "queue") {
+                  return (
+                    <QueuedMessageGroup
+                      key={item.key}
+                      item={item as QueuedThreadItem}
+                      onRemove={removeQueuedMessage}
                     />
                   );
                 }

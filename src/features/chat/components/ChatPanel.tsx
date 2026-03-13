@@ -22,7 +22,7 @@ export const ChatPanel = memo(function ChatPanel() {
   );
   const [indicatorNow, setIndicatorNow] = useState(() => Date.now());
 
-  useSessionMessages(selectedSessionId);
+  const sessionMessagesQuery = useSessionMessages(selectedSessionId);
 
   useEffect(() => {
     const expiries: number[] = [];
@@ -89,7 +89,7 @@ export const ChatPanel = memo(function ChatPanel() {
         </button>
       ) : null}
       <ChatHeader />
-      <MessageList />
+      <MessageList isLoading={Boolean(selectedSessionId) && sessionMessagesQuery.isPending} />
       {showFallbackIndicator && fallbackStatus ? (
         <div
           className={`compaction-indicator ${fallbackStatus.phase === "cleared" ? "compaction-indicator--fallback-cleared" : "compaction-indicator--fallback"}`}

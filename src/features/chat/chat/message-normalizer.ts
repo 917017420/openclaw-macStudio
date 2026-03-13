@@ -130,6 +130,21 @@ function normalizeToolStatus(value: unknown): MessageToolCard["status"] | undefi
   return undefined;
 }
 
+function resolveToolPhaseStatus(message: unknown): MessageToolCard["status"] | undefined {
+  const raw = unwrapMessage(message);
+  if (!raw || !raw.__openclaw || typeof raw.__openclaw !== "object") {
+    return undefined;
+  }
+  const marker = raw.__openclaw as Record<string, unknown>;
+  if (marker.toolPhase === "result") {
+    return "completed";
+  }
+  if (marker.toolPhase === "update" || marker.toolPhase === "start") {
+    return "started";
+  }
+  return undefined;
+}
+
 function stringifyToolValue(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
@@ -190,7 +205,7 @@ function coerceToolCards(message: unknown): MessageToolCard[] {
   }
 
   const cards: MessageToolCard[] = [];
-  const toolStatus = normalizeToolStatus(raw.status);
+  const toolStatus = normalizeToolStatus(raw.status) ?? resolveToolPhaseStatus(message);
   const toolError = typeof raw.error === "string" ? raw.error : undefined;
   for (const item of normalizeContentArray(message)) {
     const kind = (typeof item.type === "string" ? item.type : "").toLowerCase();

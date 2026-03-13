@@ -35,6 +35,7 @@ export type ToolStreamEntry = {
   name: string;
   args?: unknown;
   output?: string;
+  phase: "start" | "update" | "result";
   startedAt: number;
   updatedAt: number;
   message: Record<string, unknown>;
@@ -229,11 +230,11 @@ function buildToolStreamMessage(entry: ToolStreamEntry): Record<string, unknown>
     name: entry.name,
     arguments: entry.args ?? {},
   });
-  if (entry.output) {
+  if (entry.phase === "result" || entry.output !== undefined) {
     content.push({
       type: "toolresult",
       name: entry.name,
-      text: entry.output,
+      text: entry.output ?? "",
     });
   }
   return {
@@ -243,6 +244,9 @@ function buildToolStreamMessage(entry: ToolStreamEntry): Record<string, unknown>
     runId: entry.runId,
     content,
     timestamp: entry.startedAt,
+    __openclaw: {
+      toolPhase: entry.phase,
+    },
   };
 }
 
@@ -393,6 +397,7 @@ export function handleAgentToolEvent(host: SessionToolStreamHost, payload?: Agen
       name,
       args,
       output: output ?? undefined,
+      phase: phase === "result" ? "result" : phase === "update" ? "update" : "start",
       startedAt: payload.ts || now,
       updatedAt: now,
       message: {},
@@ -401,10 +406,11 @@ export function handleAgentToolEvent(host: SessionToolStreamHost, payload?: Agen
     host.toolStreamOrder.push(toolCallId);
   } else {
     entry.name = name;
+    entry.phase = phase === "result" ? "result" : phase === "update" ? "update" : "start";
     if (args !== undefined) {
       entry.args = args;
     }
-    if (output !== undefined) {
+    if (output !== undefined || phase === "result") {
       entry.output = output ?? undefined;
     }
     entry.updatedAt = now;

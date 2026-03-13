@@ -1,9 +1,11 @@
 import { memo } from "react";
-import type { ChatMessage } from "@/lib/gateway";
+import { LoaderCircle, X } from "lucide-react";
+import type { ChatAttachment, ChatMessage } from "@/lib/gateway";
 import { MessageCopyButton } from "@/features/chat/components/MessageCopyButton";
 import { MarkdownRenderer } from "@/features/chat/components/MarkdownRenderer";
 import { StreamingIndicator } from "@/features/chat/components/StreamingIndicator";
 import { ThinkingBlock } from "@/features/chat/components/ThinkingBlock";
+import type { QueuedChatMessage } from "@/features/chat/store";
 import {
   extractImages,
   extractTextCached,
@@ -30,6 +32,16 @@ export type MessageGroup = {
   isStreaming: boolean;
 };
 
+export type QueuedThreadItem = {
+  kind: "queue";
+  key: string;
+  queueItem: QueuedChatMessage;
+  index: number;
+  total: number;
+};
+
+export type ThreadItem = ChatItem | MessageGroup | QueuedThreadItem;
+
 const CHAT_HISTORY_RENDER_LIMIT = 200;
 
 type BuildChatItemsOptions = {
@@ -37,6 +49,7 @@ type BuildChatItemsOptions = {
   toolMessages?: unknown[];
   streamingText?: string | null;
   streamStartedAt?: number | null;
+  queuedMessages?: QueuedChatMessage[];
 };
 
 function messageKey(message: unknown, index: number): string {
@@ -100,7 +113,7 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
   return result;
 }
 
-export function buildChatItems(options: BuildChatItemsOptions): Array<ChatItem | MessageGroup> {
+export function buildChatItems(options: BuildChatItemsOptions): ThreadItem[] {
   const items: ChatItem[] = [];
   const history = Array.isArray(options.messages) ? options.messages : [];
   const tools = Array.isArray(options.toolMessages) ? options.toolMessages : [];
@@ -166,7 +179,24 @@ export function buildChatItems(options: BuildChatItemsOptions): Array<ChatItem |
     }
   }
 
-  return groupMessages(items);
+  const grouped = groupMessages(items);
+  const queuedMessages = Array.isArray(options.queuedMessages) ? options.queuedMessages : [];
+  if (queuedMessages.length === 0) {
+    return grouped;
+  }
+
+  return [
+    ...grouped,
+    ...queuedMessages.map(
+      (queueItem, index): QueuedThreadItem => ({
+        kind: "queue",
+        key: `queue:${queueItem.id}`,
+        queueItem,
+        index,
+        total: queuedMessages.length,
+      }),
+    ),
+  ];
 }
 
 function openAttachment(url: string) {
@@ -224,6 +254,26 @@ function MessageImages({ message }: { message: unknown }) {
           alt={image.alt ?? "Attached image"}
           className="chat-message-image"
           onClick={() => openAttachment(image.dataUrl)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function QueuedMessageImages({ attachments }: { attachments: ChatAttachment[] }) {
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="chat-message-images chat-queue-bubble__images">
+      {attachments.map((attachment) => (
+        <img
+          key={attachment.id}
+          src={attachment.dataUrl}
+          alt={attachment.alt ?? "Queued attachment"}
+          className="chat-message-image"
+          onClick={() => openAttachment(attachment.dataUrl)}
         />
       ))}
     </div>
@@ -354,6 +404,71 @@ export function MessageGroupView({
         <div className="chat-group-footer">
           <span className="chat-sender-name">{who}</span>
           <span className="chat-group-timestamp">{timestamp}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function QueuedMessageGroup({
+  item,
+  onRemove,
+}: {
+  item: QueuedThreadItem;
+  onRemove: (id: string) => void;
+}) {
+  const timestamp = new Date(item.queueItem.createdAt).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const attachmentCount = item.queueItem.attachments.length;
+  const attachmentSummary =
+    attachmentCount > 0
+      ? `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
+      : null;
+
+  return (
+    <div className="chat-group user chat-group--queued">
+      <Avatar role="user" assistantName="Assistant" />
+      <div className="chat-group-messages">
+        <div className="chat-bubble chat-queue-bubble fade-in">
+          <div className="chat-queue-bubble__meta">
+            <span className="chat-queue-badge">
+              <LoaderCircle size={12} className="animate-spin" />
+              Queued
+            </span>
+            {item.total > 1 ? (
+              <span className="chat-queue-bubble__count">
+                {item.index + 1}/{item.total}
+              </span>
+            ) : null}
+          </div>
+
+          <QueuedMessageImages attachments={item.queueItem.attachments} />
+
+          {item.queueItem.text ? (
+            <div className="chat-queue-bubble__text">{item.queueItem.text}</div>
+          ) : attachmentSummary ? (
+            <div className="chat-queue-bubble__text muted">{attachmentSummary}</div>
+          ) : null}
+
+          <div className="chat-queue-bubble__footer">
+            <span className="chat-queue-bubble__timestamp">{timestamp}</span>
+            <button
+              type="button"
+              className="composer-btn chat-queue-bubble__remove"
+              onClick={() => onRemove(item.queueItem.id)}
+              aria-label="Remove queued message"
+              title="Remove queued message"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+
+        <div className="chat-group-footer">
+          <span className="chat-sender-name">You</span>
+          <span className="chat-group-timestamp">Queued</span>
         </div>
       </div>
     </div>
